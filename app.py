@@ -38,7 +38,50 @@ uploaded_file = st.file_uploader(
 )
 
 if uploaded_file:
-    df = pd.read_excel(uploaded_file)
+    import pandas as pd
+
+def load_lgs_excel(uploaded_file):
+    raw = pd.read_excel(uploaded_file, header=None)  # başlık varsayma
+    raw = raw.dropna(axis=1, how="all")              # tamamen boş sütunları at
+
+    # "Öğr.No" satırını bul (asıl kolon başlıklarının başladığı yer)
+    header_idx = None
+    for i in range(len(raw)):
+        row_str = raw.iloc[i].astype(str)
+        if row_str.str.contains("Öğr.No", case=False, na=False).any():
+            header_idx = i
+            break
+    if header_idx is None:
+        # Bulamazsa en azından ilk satırı başlık yapma, ham döndür
+        return raw, None, None
+
+    # Başlık satırını kolon adı yap
+    header = raw.iloc[header_idx].tolist()
+    df = raw.iloc[header_idx + 1:].copy()
+    df.columns = header
+
+    # Tamamen boş satırları at
+    df = df.dropna(how="all")
+
+    # Özet satırlarını ayır (Kurum Ortalaması / Genel Ortalama)
+    kurum_ort = df[df.iloc[:, 0].astype(str).str.contains("Kurum Ortalaması", na=False)]
+    genel_ort = df[df.iloc[:, 0].astype(str).str.contains("Genel Ortalama", na=False)]
+
+    # Bu satırları ana veriden çıkar
+    df = df[~df.iloc[:, 0].astype(str).str.contains("Kurum Ortalaması|Genel Ortalama", na=False, regex=True)]
+
+    # Başlık tekrarları / sınıf-sınav satırı gibi satırları da ayıkla (isteğe bağlı ama faydalı)
+    df = df[~df.iloc[:, 0].astype(str).str.contains("SINIF|SINAV", na=False)]
+
+    # Sütun isimlerini temizle (boş/None olan kolonları at)
+    df = df.loc[:, [c for c in df.columns if str(c).strip() not in ["None", "nan", ""]]]
+
+    return df, kurum_ort, genel_ort
+
+
+# --- senin mevcut kodunda, uploaded_file geldikten sonra şunu kullan:
+df, kurum_ort, genel_ort = load_lgs_excel(uploaded_file)
+
 
     st.subheader("Yüklenen Veri Önizleme")
     st.dataframe(df.head())
