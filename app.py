@@ -12,6 +12,8 @@ SUPABASE_URL = st.secrets["SUPABASE_URL"]
 SUPABASE_ANON_KEY = st.secrets["SUPABASE_ANON_KEY"]
 supabase = create_client(SUPABASE_URL, SUPABASE_ANON_KEY)
 
+TABLE = "lgs_results"
+
 # --------------------
 # YARDIMCI
 # --------------------
@@ -30,20 +32,15 @@ def make_unique_columns(col_list):
         out.append(name)
     return out
 
-
 @st.cache_data(show_spinner=False)
 def parse_cemil_meric_format(uploaded_file):
     """
     CEMIL_MERIC-8.xlsx gibi rapor formatını düzgün tabloya çevirir.
-    - Üst başlık: ders isimleri (Türkçe, Tarih, ...)
-    - Alt başlık: D/Y/N veya Derece bilgileri
-    - "Genel Ortalama" / "Kurum Ortalaması" satırlarını ayırır
-    - Tekrarlayan kolon isimlerini her tabloda benzersizleştirir (pyarrow hatasını kesin çözer)
     """
     raw = pd.read_excel(uploaded_file, header=None)
     raw = raw.dropna(axis=1, how="all")
 
-    # Deneme adı (genelde 2. satır 1. kolon gibi)
+    # Deneme adı
     exam_name = "Deneme"
     try:
         val = raw.iloc[1, 0]
@@ -52,7 +49,7 @@ def parse_cemil_meric_format(uploaded_file):
     except Exception:
         pass
 
-    # Başlık satırı: ilk sütunda "Öğr.No" olan satır
+    # Başlık satırı: "Öğr.No"
     header_idx = None
     for i in range(len(raw)):
         if str(raw.iloc[i, 0]).strip() == "Öğr.No":
@@ -61,10 +58,7 @@ def parse_cemil_meric_format(uploaded_file):
     if header_idx is None:
         raise ValueError("Başlık satırı bulunamadı: 'Öğr.No' satırı yok.")
 
-    # Üst başlık (ders isimleri): header_idx-1
     top = raw.iloc[header_idx - 1].copy().ffill()
-
-    # Alt başlık (D/Y/N vs): header_idx
     sub = raw.iloc[header_idx].copy()
 
     cols = []
@@ -79,18 +73,14 @@ def parse_cemil_meric_format(uploaded_file):
         elif j == 2:
             cols.append("Sinif")
         else:
-            # LGS Puan kolonunu yakala
             if top_j.lower() == "lgs" and sub_j.lower() == "puan":
                 cols.append("LGS_Puan")
-            # Dereceler
             elif sub_j in ["Sınıf", "Kurum", "İlçe", "İl", "Genel"]:
                 cols.append(f"Derece_{sub_j}")
             else:
-                # Ders D/Y/N kolonları
                 if sub_j in ["D", "Y", "N"]:
                     cols.append(f"{top_j}_{sub_j}")
                 else:
-                    # Beklenmedik durum: en azından bir isim ver
                     cols.append(top_j if top_j else sub_j if sub_j else f"Kolon_{j}")
 
     cols = make_unique_columns(cols)
@@ -99,138 +89,170 @@ def parse_cemil_meric_format(uploaded_file):
     df.columns = cols
     df = df.dropna(how="all")
 
-    # Ortalama satırlarını ayır (OgrNo kolonu metin olabiliyor)
     first = df["OgrNo"].astype(str)
-
     genel_ort = df[first.str.contains("Genel Ortalama", na=False)].copy()
     kurum_ort = df[first.str.contains("Kurum Ortalaması", na=False)].copy()
-
-    # Ana veriden çıkar
     df = df[~first.str.contains("Genel Ortalama|Kurum Ortalaması", na=False, regex=True)].copy()
 
-    # Her üç tabloda da kolon adlarını benzersizleştir (kritik fix)
+    # PyArrow güvenliği: her tabloda benzersiz kolon
     df.columns = make_unique_columns(df.columns)
     genel_ort.columns = make_unique_columns(genel_ort.columns)
     kurum_ort.columns = make_unique_columns(kurum_ort.columns)
 
-    # Tip düzeltmeleri
     df["OgrNo"] = pd.to_numeric(df["OgrNo"], errors="coerce")
     if "LGS_Puan" in df.columns:
         df["LGS_Puan"] = pd.to_numeric(df["LGS_Puan"], errors="coerce")
 
     df["Deneme"] = exam_name
 
-    # D/Y/N kolonlarını sayısala çevir
+    # D/Y/N kolonları sayısal
     for c in df.columns:
         if c.endswith("_D") or c.endswith("_Y") or c.endswith("_N"):
             df[c] = pd.to_numeric(df[c], errors="coerce")
 
     return df.reset_index(drop=True), genel_ort, kurum_ort, exam_name
 
+def _to_payload(row: pd.Series) -> dict:
+    # JSONB için NaN -> None
+    d = row.to_dict()
+    for k, v in list(d.items()):
+        if pd.isna(v):
+            d[k] = None
+    return d
+
+def save_exam_to_supabase(df_exam: pd.DataFrame, exam_name: str):
+    """
+    Aynı exam_name için önce eski kayıtları siler, sonra yenilerini yazar.
+    (Basit ve güvenilir; mükerrerleri engeller.)
+    """
+    # 1) sil
+    supabase.table(TABLE).delete().eq("exam_name", exam_name).execute()
+
+    # 2) yaz
+    rows = []
+    for _, r in df_exam.iterrows():
+        rows.append({
+            "exam_name": exam_name,
+            "exam_date": None,
+            "ogr_no": int(r["OgrNo"]) if pd.notna(r.get("OgrNo")) else None,
+            "ad_soyad": str(r.get("AdSoyad", "")).strip(),
+            "sinif": str(r.get("Sinif", "")).strip() if pd.notna(r.get("Sinif")) else None,
+            "lgs_puan": float(r.get("LGS_Puan")) if pd.notna(r.get("LGS_Puan")) else None,
+            "payload": _to_payload(r),
+        })
+    # toplu insert (500 limiti aşarsa parçala)
+    chunk_size = 300
+    for i in range(0, len(rows), chunk_size):
+        supabase.table(TABLE).insert(rows[i:i+chunk_size]).execute()
+
+@st.cache_data(show_spinner=False, ttl=30)
+def fetch_all_results():
+    # Supabase'ten tüm kayıtları çek
+    res = supabase.table(TABLE).select("exam_name,ogr_no,ad_soyad,sinif,lgs_puan,created_at").execute()
+    data = res.data or []
+    return pd.DataFrame(data)
 
 # --------------------
 # UI
 # --------------------
 st.title("📊 LGS Deneme Takip ve Analiz Sistemi")
-st.caption("Excel’den öğrencilerin performansını izleme, filtreleme ve raporlama paneli")
+st.caption("Excel yükle → Supabase'e kaydet → geçmişten trend ve analiz")
 
-st.header("📥 Deneme Sonuçlarını Yükle")
-uploaded_file = st.file_uploader("Excel dosyasını seçiniz (.xlsx)", type=["xlsx"], key="excel_upload")
+left, right = st.columns([1.1, 1])
 
-if not uploaded_file:
-    st.info("Devam etmek için Excel dosyasını yükleyin.")
-    st.stop()
+with left:
+    st.header("1) Excel Yükle ve Kaydet")
+    uploaded_file = st.file_uploader("Cemil Meriç raporu (.xlsx)", type=["xlsx"], key="excel_upload")
 
-df, genel_ort, kurum_ort, exam_name = parse_cemil_meric_format(uploaded_file)
+    if uploaded_file:
+        df, genel_ort, kurum_ort, exam_name = parse_cemil_meric_format(uploaded_file)
 
-st.success(f"Yüklendi ✅  | Deneme: {exam_name} | Öğrenci: {df['AdSoyad'].nunique()}")
+        st.success(f"Okundu ✅ | Deneme: {exam_name} | Öğrenci: {df['AdSoyad'].nunique()}")
 
-# ---------- Sidebar filtreler ----------
-st.sidebar.header("🔎 Filtreler")
+        with st.expander("📌 Kurum / Genel Ortalama (Excel’deki satırlar)", expanded=False):
+            if len(kurum_ort) > 0:
+                st.write("**Kurum Ortalaması**")
+                st.dataframe(kurum_ort, use_container_width=True)
+            if len(genel_ort) > 0:
+                st.write("**Genel Ortalama**")
+                st.dataframe(genel_ort, use_container_width=True)
 
-siniflar = sorted([s for s in df["Sinif"].dropna().unique()])
-sec_siniflar = st.sidebar.multiselect("Sınıf", siniflar, default=siniflar)
+        st.subheader("Önizleme (ilk 20 satır)")
+        st.dataframe(df.head(20), use_container_width=True)
 
-df_f = df[df["Sinif"].isin(sec_siniflar)].copy()
+        if st.button("✅ Bu denemeyi Supabase’e Kaydet", type="primary"):
+            with st.spinner("Kaydediliyor..."):
+                save_exam_to_supabase(df, exam_name)
+                st.cache_data.clear()
+            st.success("Kaydedildi ✅ Artık geçmişte görünecek.")
 
-ogrenciler = sorted([s for s in df_f["AdSoyad"].dropna().unique()])
-sec_ogr = st.sidebar.selectbox("Öğrenci (tek)", ["(Seçme)"] + ogrenciler)
+with right:
+    st.header("2) Geçmiş Denemelerden Analiz")
+    all_df = fetch_all_results()
 
-# ---------- KPI kartları ----------
-c1, c2, c3, c4 = st.columns(4)
-with c1:
-    st.metric("Öğrenci", f"{df_f['AdSoyad'].nunique()}")
-with c2:
-    st.metric("Sınıf", f"{df_f['Sinif'].nunique()}")
-with c3:
-    if "LGS_Puan" in df_f.columns and df_f["LGS_Puan"].notna().any():
-        st.metric("Ortalama Puan", f"{df_f['LGS_Puan'].mean():.2f}")
-    else:
-        st.metric("Ortalama Puan", "—")
-with c4:
-    if "LGS_Puan" in df_f.columns and df_f["LGS_Puan"].notna().any():
-        st.metric("En Yüksek Puan", f"{df_f['LGS_Puan'].max():.2f}")
-    else:
-        st.metric("En Yüksek Puan", "—")
+    if all_df.empty:
+        st.info("Supabase’te henüz kayıt yok. Soldan Excel yükleyip kaydet.")
+        st.stop()
 
-tab1, tab2, tab3 = st.tabs(["📋 Liste", "🏫 Sınıf Analizi", "🧑‍🎓 Öğrenci Analizi"])
+    exams = sorted([e for e in all_df["exam_name"].dropna().unique()])
+    sec_exam = st.selectbox("Deneme seç", exams)
 
-with tab1:
-    st.subheader("Yüklenen Veri (filtreli)")
-    st.dataframe(df_f, use_container_width=True)
+    df_exam = all_df[all_df["exam_name"] == sec_exam].copy()
 
-    with st.expander("📌 Kurum / Genel Ortalama (Excel’deki satırlar)", expanded=False):
-        if len(kurum_ort) > 0:
-            st.write("**Kurum Ortalaması**")
-            st.dataframe(kurum_ort, use_container_width=True)
+    st.sidebar.header("🔎 Filtreler")
+    siniflar = sorted([s for s in df_exam["sinif"].dropna().unique()])
+    sec_siniflar = st.sidebar.multiselect("Sınıf", siniflar, default=siniflar)
+
+    df_f = df_exam[df_exam["sinif"].isin(sec_siniflar)].copy()
+
+    ogr_list = sorted([s for s in df_f["ad_soyad"].dropna().unique()])
+    sec_ogr = st.sidebar.selectbox("Öğrenci", ["(Seçme)"] + ogr_list)
+
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        st.metric("Öğrenci", f"{df_f['ad_soyad'].nunique()}")
+    with c2:
+        st.metric("Sınıf", f"{df_f['sinif'].nunique()}")
+    with c3:
+        st.metric("Ortalama Puan", f"{df_f['lgs_puan'].mean():.2f}" if df_f["lgs_puan"].notna().any() else "—")
+
+    tabA, tabB, tabC = st.tabs(["📋 Liste", "🏫 Sınıf", "📈 Öğrenci Trend"])
+
+    with tabA:
+        st.dataframe(df_f.sort_values(["sinif", "lgs_puan"], ascending=[True, False]), use_container_width=True)
+
+    with tabB:
+        if df_f["lgs_puan"].notna().any():
+            rank_df = df_f[["ad_soyad", "sinif", "lgs_puan"]].dropna().sort_values("lgs_puan", ascending=False)
+            st.dataframe(rank_df, use_container_width=True)
+
+            fig, ax = plt.subplots()
+            ax.hist(df_f["lgs_puan"].dropna(), bins=15)
+            ax.set_xlabel("LGS Puan")
+            ax.set_ylabel("Öğrenci Sayısı")
+            st.pyplot(fig)
         else:
-            st.info("Kurum Ortalaması satırı bulunamadı.")
+            st.warning("Bu denemede puan verisi yok.")
 
-        if len(genel_ort) > 0:
-            st.write("**Genel Ortalama**")
-            st.dataframe(genel_ort, use_container_width=True)
+    with tabC:
+        if sec_ogr == "(Seçme)":
+            st.info("Sol menüden bir öğrenci seç.")
         else:
-            st.info("Genel Ortalama satırı bulunamadı.")
+            # Seçili öğrenci tüm denemelerde nasıl?
+            all_student = all_df[all_df["ad_soyad"] == sec_ogr].copy()
+            all_student = all_student.sort_values("created_at")
 
-with tab2:
-    st.subheader("Sınıf bazlı puan dağılımı ve sıralama")
+            st.write(f"**Öğrenci:** {sec_ogr}")
 
-    if "LGS_Puan" in df_f.columns and df_f["LGS_Puan"].notna().any():
-        rank_df = df_f[["AdSoyad", "Sinif", "LGS_Puan"]].dropna().sort_values("LGS_Puan", ascending=False)
-        st.dataframe(rank_df, use_container_width=True)
+            if all_student["lgs_puan"].notna().any():
+                fig, ax = plt.subplots()
+                ax.plot(all_student["exam_name"], all_student["lgs_puan"], marker="o")
+                ax.set_xlabel("Deneme")
+                ax.set_ylabel("Puan")
+                ax.set_title("Denemeler Boyunca Puan Değişimi")
+                plt.xticks(rotation=30, ha="right")
+                st.pyplot(fig)
 
-        fig, ax = plt.subplots()
-        ax.hist(df_f["LGS_Puan"].dropna(), bins=15)
-        ax.set_xlabel("LGS Puan")
-        ax.set_ylabel("Öğrenci Sayısı")
-        st.pyplot(fig)
-    else:
-        st.warning("Bu dosyada LGS Puan sütunu bulunamadı veya boş.")
-
-with tab3:
-    st.subheader("Öğrenci profili")
-
-    if sec_ogr != "(Seçme)":
-        odf = df_f[df_f["AdSoyad"] == sec_ogr].copy()
-
-        c1, c2 = st.columns(2)
-        with c1:
-            st.write("**Seçili Öğrenci:**", sec_ogr)
-            st.write("**Sınıf:**", odf["Sinif"].iloc[0] if len(odf) else "—")
-        with c2:
-            if "LGS_Puan" in odf.columns and odf["LGS_Puan"].notna().any():
-                st.metric("Puan", f"{odf['LGS_Puan'].iloc[0]:.2f}")
+                st.dataframe(all_student[["exam_name", "sinif", "lgs_puan", "created_at"]], use_container_width=True)
             else:
-                st.metric("Puan", "—")
-
-        # Net kolonları (varsa)
-        net_cols = [c for c in odf.columns if c.endswith("_N")]
-        if net_cols:
-            st.write("### Ders Netleri (N)")
-            show = odf[net_cols].T
-            show.columns = ["Net"]
-            st.dataframe(show, use_container_width=True)
-        else:
-            st.info("Bu dosyada ders net (…_N) sütunları bulunamadı.")
-    else:
-        st.info("Soldan bir öğrenci seçersen detaylar burada görünecek.")
+                st.warning("Bu öğrenci için puan verisi bulunamadı.")
