@@ -37,8 +37,7 @@ uploaded_file = st.file_uploader(
     type=["xlsx"]
 )
 
-if uploaded_file:
-    import pandas as pd
+import pandas as pd
 
 def load_lgs_excel(uploaded_file):
     raw = pd.read_excel(uploaded_file, header=None)  # başlık varsayma
@@ -51,8 +50,8 @@ def load_lgs_excel(uploaded_file):
         if row_str.str.contains("Öğr.No", case=False, na=False).any():
             header_idx = i
             break
+
     if header_idx is None:
-        # Bulamazsa en azından ilk satırı başlık yapma, ham döndür
         return raw, None, None
 
     # Başlık satırını kolon adı yap
@@ -60,33 +59,78 @@ def load_lgs_excel(uploaded_file):
     df = raw.iloc[header_idx + 1:].copy()
     df.columns = header
 
-    # Tamamen boş satırları at
     df = df.dropna(how="all")
 
-    # Özet satırlarını ayır (Kurum Ortalaması / Genel Ortalama)
-    kurum_ort = df[df.iloc[:, 0].astype(str).str.contains("Kurum Ortalaması", na=False)]
-    genel_ort = df[df.iloc[:, 0].astype(str).str.contains("Genel Ortalama", na=False)]
+    # Özet satırlarını ayır
+    first_col = df.iloc[:, 0].astype(str)
+    kurum_ort = df[first_col.str.contains("Kurum Ortalaması", na=False)]
+    genel_ort = df[first_col.str.contains("Genel Ortalama", na=False)]
 
-    # Bu satırları ana veriden çıkar
-    df = df[~df.iloc[:, 0].astype(str).str.contains("Kurum Ortalaması|Genel Ortalama", na=False, regex=True)]
+    # Özet satırlarını ana veriden çıkar
+    df = df[~first_col.str.contains("Kurum Ortalaması|Genel Ortalama", na=False, regex=True)]
 
-    # Başlık tekrarları / sınıf-sınav satırı gibi satırları da ayıkla (isteğe bağlı ama faydalı)
+    # Başlık tekrarları / sınıf-sınav satırları
     df = df[~df.iloc[:, 0].astype(str).str.contains("SINIF|SINAV", na=False)]
 
-    # Sütun isimlerini temizle (boş/None olan kolonları at)
+    # Boş kolonları at
     df = df.loc[:, [c for c in df.columns if str(c).strip() not in ["None", "nan", ""]]]
 
     return df, kurum_ort, genel_ort
 
 
-# --- senin mevcut kodunda, uploaded_file geldikten sonra şunu kullan:
-df, kurum_ort, genel_ort = load_lgs_excel(uploaded_file)
+# =========================
+# AŞAĞISI: Streamlit UI
+# =========================
+uploaded_file = st.file_uploader("Excel dosyasını seçiniz (.xlsx)", type=["xlsx"])
 
+if uploaded_file:
+    df, kurum_ort, genel_ort = load_lgs_excel(uploaded_file)
 
     st.subheader("Yüklenen Veri Önizleme")
     st.dataframe(df.head())
 
     st.success("Excel dosyası başarıyla yüklendi.")
+
+    # Basit analiz örneği
+    if "Öğrenci Adı" in df.columns and "Toplam Net" in df.columns:
+        st.header("📈 Toplam Net Gelişimi")
+
+        fig, ax = plt.subplots()
+        for ogrenci in df["Öğrenci Adı"].unique():
+            ogr_df = df[df["Öğrenci Adı"] == ogrenci]
+            ax.plot(ogr_df.index, ogr_df["Toplam Net"], label=ogrenci)
+
+        ax.set_xlabel("Deneme Sırası")
+        ax.set_ylabel("Toplam Net")
+        ax.legend()
+        st.pyplot(fig)
+
+        st.header("📄 PDF Rapor")
+
+        if st.button("PDF Rapor Oluştur"):
+            buffer = BytesIO()
+            doc = SimpleDocTemplate(buffer)
+            styles = getSampleStyleSheet()
+
+            elements = []
+            elements.append(Paragraph("LGS Deneme Sınavı Analiz Raporu", styles["Title"]))
+            elements.append(Spacer(1, 12))
+
+            for ogrenci in df["Öğrenci Adı"].unique():
+                ort_net = df[df["Öğrenci Adı"] == ogrenci]["Toplam Net"].mean()
+                elements.append(Paragraph(f"{ogrenci} - Ortalama Net: {ort_net:.2f}", styles["Normal"]))
+
+            doc.build(elements)
+            buffer.seek(0)
+
+            st.download_button(
+                "PDF'i İndir",
+                data=buffer,
+                file_name="lgs_analiz_raporu.pdf",
+                mime="application/pdf"
+            )
+
+
 
     # Basit analiz örneği
     if "Öğrenci Adı" in df.columns and "Toplam Net" in df.columns:
