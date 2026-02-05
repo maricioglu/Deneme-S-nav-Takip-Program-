@@ -17,7 +17,29 @@ SUPABASE_URL = st.secrets["SUPABASE_URL"]
 SUPABASE_ANON_KEY = st.secrets["SUPABASE_ANON_KEY"]
 supabase = create_client(SUPABASE_URL, SUPABASE_ANON_KEY)
 
+# Türkçe PDF fontu (ReportLab)
 pdfmetrics.registerFont(UnicodeCIDFont("HeiseiMin-W3"))
+
+# --------------------
+# YARDIMCI: SÜTUN ADLARINI BENZERSİZ YAP
+# --------------------
+def make_unique_columns(df: pd.DataFrame) -> pd.DataFrame:
+    cols = []
+    seen = {}
+    for c in df.columns:
+        name = str(c).strip()
+        if name == "" or name.lower() in ["none", "nan"]:
+            name = "Kolon"
+        if name in seen:
+            seen[name] += 1
+            name = f"{name}_{seen[name]}"
+        else:
+            seen[name] = 0
+        cols.append(name)
+    out = df.copy()
+    out.columns = cols
+    return out
+
 
 # --------------------
 # EXCEL OKUMA / TEMİZLEME
@@ -26,6 +48,7 @@ def load_lgs_excel(uploaded_file):
     raw = pd.read_excel(uploaded_file, header=None)
     raw = raw.dropna(axis=1, how="all")
 
+    # "Öğr.No" satırını bul (kolon başlıklarının başladığı satır)
     header_idx = None
     for i in range(len(raw)):
         row_str = raw.iloc[i].astype(str)
@@ -34,55 +57,56 @@ def load_lgs_excel(uploaded_file):
             break
 
     if header_idx is None:
+        # Bulamazsa ham veriyi döndür
         return raw, None, None
 
     header = raw.iloc[header_idx].tolist()
-    df = raw.iloc[header_idx + 1:].copy()
+    df = raw.iloc[header_idx + 1 :].copy()
     df.columns = header
     df = df.dropna(how="all")
 
+    # Özet satırlarını ayır
     first_col = df.iloc[:, 0].astype(str)
     kurum_ort = df[first_col.str.contains("Kurum Ortalaması", na=False)]
     genel_ort = df[first_col.str.contains("Genel Ortalama", na=False)]
 
+    # Özet satırlarını ana veriden çıkar
     df = df[~first_col.str.contains("Kurum Ortalaması|Genel Ortalama", na=False, regex=True)]
+
+    # Başlık tekrarları / sınıf-sınav satırları
     df = df[~df.iloc[:, 0].astype(str).str.contains("SINIF|SINAV", na=False)]
+
+    # Boş kolonları at (önce)
     df = df.loc[:, [c for c in df.columns if str(c).strip() not in ["None", "nan", ""]]]
+
+    # Sütun adlarını benzersiz yap (Streamlit/pyarrow hatasını kesin çözer)
+    df = make_unique_columns(df)
 
     return df, kurum_ort, genel_ort
 
 
 def normalize_columns_and_metrics(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    - 'Ad, Soyad' -> 'Öğrenci Adı' (yoksa başka olası isimleri de dener)
-    - 'Toplam Net' yoksa sayısal sütunlardan toplam üretir
-    """
     df = df.copy()
-
-    # Sütun adlarını stringe çevirip trimle
     df.columns = [str(c).strip() for c in df.columns]
+    df = make_unique_columns(df)
 
     # Öğrenci adı sütunu eşleme
-    candidate_name_cols = [
-        "Öğrenci Adı", "Ad Soyad", "Ad, Soyad", "Ad Soyad ", "Ad Soyadı", "Ad Soyadi", "Ad Soyadİ", "Ad SoyadI"
-    ]
     if "Öğrenci Adı" not in df.columns:
-        found = None
-        for c in candidate_name_cols:
+        for c in ["Ad, Soyad", "Ad Soyad", "Ad Soyadı", "Ad Soyadi"]:
             if c in df.columns:
-                found = c
+                df = df.rename(columns={c: "Öğrenci Adı"})
                 break
-        if found:
-            df = df.rename(columns={found: "Öğrenci Adı"})
 
-    # Toplam Net üretimi
+    # Toplam Net üretimi (çok temel: sayısal sütunların toplamı)
     if "Toplam Net" not in df.columns:
-        # sayısala çevrilebilen sütunları yakala (Öğr.No gibi ID sütunlarını hariç tut)
-        exclude_like = {"Öğr.No", "Öğr No", "Ögr.No", "Ögr No", "Sınıf", "Sinif", "Öğrenci Adı", "Ad, Soyad", "Ad Soyad"}
+        exclude_like = {
+            "Öğr.No", "Öğr No", "Ögr.No", "Ögr No",
+            "Sınıf", "Sinif",
+            "Öğrenci Adı", "Ad, Soyad", "Ad Soyad",
+        }
         numeric_candidates = [c for c in df.columns if c not in exclude_like]
 
         numeric_df = df[numeric_candidates].apply(pd.to_numeric, errors="coerce")
-        # Çok boş olan kolonları düşür (tamamı NaN olanlar)
         numeric_df = numeric_df.dropna(axis=1, how="all")
 
         if numeric_df.shape[1] > 0:
@@ -101,17 +125,17 @@ st.markdown("Psikolojik Danışman kullanımına özel analiz paneli")
 # EXCEL YÜKLEME
 # --------------------
 st.header("📥 Deneme Sonuçlarını Yükle")
-
-uploaded_file = st.file_uploader("Excel dosyasını seçiniz (.xlsx)", type=["xlsx"])
+uploaded_file = st.file_uploader("Excel dosyasını seçiniz (.xlsx)", type=["xlsx"], key="excel_upload")
 
 if uploaded_file:
     df, kurum_ort, genel_ort = load_lgs_excel(uploaded_file)
     df = normalize_columns_and_metrics(df)
+    df = make_unique_columns(df)  # ekstra güvenlik
 
     st.success("Excel dosyası başarıyla yüklendi.")
 
     st.subheader("Yüklenen Veri Önizleme")
-    st.dataframe(df.head())
+    st.dataframe(df.head(20))
 
     with st.expander("📌 Kurum / Genel Ortalama (varsa)", expanded=False):
         if kurum_ort is not None and len(kurum_ort) > 0:
@@ -142,11 +166,7 @@ if uploaded_file:
         ax.legend()
         st.pyplot(fig)
 
-        # --------------------
-        # PDF OLUŞTUR
-        # --------------------
         st.header("📄 PDF Rapor")
-
         if st.button("PDF Rapor Oluştur"):
             buffer = BytesIO()
             doc = SimpleDocTemplate(buffer)
@@ -171,11 +191,6 @@ if uploaded_file:
                 mime="application/pdf",
             )
     else:
-        missing = []
-        if "Öğrenci Adı" not in df.columns:
-            missing.append("Öğrenci Adı (Ad, Soyad)")
-        if "Toplam Net" not in df.columns:
-            missing.append("Toplam Net (veya sayısal net sütunları)")
-        st.warning("Analiz için gerekli alanlar bulunamadı: " + ", ".join(missing))
+        st.warning("Analiz için 'Öğrenci Adı' ve/veya 'Toplam Net' üretilemedi. Excel şablonunu kontrol edin.")
 else:
     st.info("Devam etmek için bir .xlsx dosyası yükleyin.")
