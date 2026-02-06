@@ -16,18 +16,17 @@ supabase = create_client(SUPABASE_URL, SUPABASE_ANON_KEY)
 TABLE = "lgs_results"
 
 # --------------------
-# STİL (kart görünümü + tipografi)
+# STİL (Canva hissi: kartlar/rozetler)
 # --------------------
 st.markdown("""
 <style>
-/* Canva benzeri kartlar */
 .kpi-card{
   border:1px solid rgba(255,255,255,0.12);
   border-radius:16px;
   padding:14px 16px;
   background: rgba(255,255,255,0.03);
 }
-.kpi-title{font-size:12px; opacity:0.8; margin-bottom:6px;}
+.kpi-title{font-size:12px; opacity:0.80; margin-bottom:6px;}
 .kpi-value{font-size:24px; font-weight:700; line-height:1.1;}
 .kpi-sub{font-size:12px; opacity:0.75; margin-top:6px;}
 .badge{
@@ -38,11 +37,13 @@ st.markdown("""
   background: rgba(255,255,255,0.04);
   font-size:12px;
   margin-right:6px;
+  margin-bottom:6px;
 }
 .section-title{
   font-size:18px;
-  font-weight:700;
-  margin-top:4px;
+  font-weight:800;
+  margin-top:2px;
+  margin-bottom:8px;
 }
 .small-note{font-size:12px; opacity:0.75;}
 </style>
@@ -79,9 +80,16 @@ def extract_kademe(sinif: str):
 
 @st.cache_data(show_spinner=False)
 def parse_school_report(uploaded_file):
+    """
+    Cemil Meriç rapor formatı (3 başlık satırı) için:
+    - grp: header_idx-2
+    - top: header_idx-1
+    - sub: header_idx (Öğr.No satırı)
+    """
     raw = pd.read_excel(uploaded_file, header=None)
     raw = raw.dropna(axis=1, how="all")
 
+    # Deneme adı genelde satır 1, kolon 0
     exam_name = "Deneme"
     try:
         v = raw.iloc[1, 0]
@@ -90,6 +98,7 @@ def parse_school_report(uploaded_file):
     except Exception:
         pass
 
+    # Başlık satırını bul
     header_idx = None
     for i in range(len(raw)):
         if str(raw.iloc[i, 0]).strip() == "Öğr.No":
@@ -115,10 +124,13 @@ def parse_school_report(uploaded_file):
         elif j == 2:
             cols.append("Sinif")
         else:
+            # LGS Puan: grup=LGS, top=Puan (sub boş olabilir)
             if g.lower() == "lgs" and t.lower() == "puan":
                 cols.append("LGS_Puan")
+            # Dereceler
             elif t.lower() == "dereceler" and s in ["Sınıf", "Kurum", "İlçe", "İl", "Genel"]:
                 cols.append(f"Derece_{s}")
+            # Ders D/Y/N
             elif s in ["D", "Y", "N"]:
                 cols.append(f"{t}_{s}")
             else:
@@ -132,9 +144,11 @@ def parse_school_report(uploaded_file):
     df.columns = cols
     df = df.dropna(how="all")
 
+    # Ortalama satırlarını çıkar
     first = df["OgrNo"].astype(str)
     df = df[~first.str.contains("Genel Ortalama|Kurum Ortalaması", na=False, regex=True)].copy()
 
+    # pyarrow güvenliği
     df.columns = make_unique_columns(df.columns)
 
     df["OgrNo"] = pd.to_numeric(df["OgrNo"], errors="coerce")
@@ -144,6 +158,7 @@ def parse_school_report(uploaded_file):
     df["Deneme"] = exam_name
     df["Kademe"] = df["Sinif"].apply(extract_kademe)
 
+    # D/Y/N sayısal
     for c in df.columns:
         if c.endswith("_D") or c.endswith("_Y") or c.endswith("_N"):
             df[c] = pd.to_numeric(df[c], errors="coerce")
@@ -158,6 +173,9 @@ def _to_payload(row: pd.Series) -> dict:
     return d
 
 def save_exam_to_supabase(df_exam: pd.DataFrame, exam_name: str):
+    """
+    Aynı exam_name tekrar yüklenirse mükerrer olmasın diye önce silip sonra yazar.
+    """
     supabase.table(TABLE).delete().eq("exam_name", exam_name).execute()
 
     rows = []
@@ -179,6 +197,10 @@ def save_exam_to_supabase(df_exam: pd.DataFrame, exam_name: str):
 
 @st.cache_data(show_spinner=False, ttl=30)
 def fetch_all_results():
+    """
+    Supabase'ten verileri çeker.
+    Not: 'kademe' sütunu yoksa hata alırsın; Supabase'de kolon ekli olmalı.
+    """
     res = supabase.table(TABLE).select(
         "exam_name,kademe,ogr_no,ad_soyad,sinif,lgs_puan,created_at"
     ).execute()
@@ -192,19 +214,16 @@ def auto_comment(student_df: pd.DataFrame) -> str:
     first = s["lgs_puan"].dropna().iloc[0]
     diff = last - first
     if diff >= 20:
-        return "🌟 Belirgin bir yükseliş var. Düzenli çalışmanın karşılığı alınmış görünüyor."
+        return "🌟 Belirgin yükseliş var. Düzenli çalışmanın karşılığı alınmış görünüyor."
     if diff >= 5:
-        return "✅ Olumlu yönde gelişim var. Bu istikrarı korumak önemli."
+        return "✅ Olumlu gelişim var. İstikrarı korumak önemli."
     if diff <= -20:
-        return "⚠️ Puanlarda belirgin düşüş var. Çalışma düzeni ve sınav kaygısı birlikte değerlendirilmeli."
+        return "⚠️ Belirgin düşüş var. Çalışma düzeni ve sınav kaygısı birlikte değerlendirilmeli."
     if diff <= -5:
-        return "🟠 Son denemelerde küçük bir gerileme var. Eksik kazanımlar ve tekrar planı gözden geçirilebilir."
-    return "🟦 Puanlar genel olarak stabil. İlerleme için hedef derslere odaklı plan faydalı olur."
+        return "🟠 Küçük bir gerileme var. Eksik kazanımlar ve tekrar planı gözden geçirilebilir."
+    return "🟦 Puanlar stabil. İlerleme için hedef derslere odaklı plan faydalı olur."
 
 def fmt_df_for_ui(df_in: pd.DataFrame) -> pd.DataFrame:
-    """
-    Kullanıcıya görünen tablo başlıklarını Türkçeleştir + estetik düzenle.
-    """
     df = df_in.copy()
     rename_map = {
         "ad_soyad": "Ad Soyad",
@@ -218,20 +237,73 @@ def fmt_df_for_ui(df_in: pd.DataFrame) -> pd.DataFrame:
             df = df.rename(columns={k: v})
     return df
 
+def get_exam_order(kdf: pd.DataFrame):
+    """
+    Denemeleri created_at'e göre sıraya koyar.
+    """
+    if kdf.empty:
+        return []
+    order = (
+        kdf.groupby("exam_name")["created_at"]
+        .min()
+        .sort_values()
+        .index
+        .tolist()
+    )
+    return order
+
+def get_prev_exam_name(kdf: pd.DataFrame, current_exam: str):
+    order = get_exam_order(kdf)
+    if current_exam not in order:
+        return None
+    i = order.index(current_exam)
+    return order[i - 1] if i > 0 else None
+
+def compute_risers_fallers(kdf: pd.DataFrame, current_exam: str):
+    prev_exam = get_prev_exam_name(kdf, current_exam)
+    if not prev_exam:
+        return None, None, None
+
+    cur = kdf[kdf["exam_name"] == current_exam][["ad_soyad", "sinif", "lgs_puan"]].copy()
+    prev = kdf[kdf["exam_name"] == prev_exam][["ad_soyad", "lgs_puan"]].copy()
+
+    cur = cur.dropna(subset=["lgs_puan"])
+    prev = prev.dropna(subset=["lgs_puan"])
+
+    merged = cur.merge(prev, on="ad_soyad", how="inner", suffixes=("_cur", "_prev"))
+    merged["degisim"] = merged["lgs_puan_cur"] - merged["lgs_puan_prev"]
+
+    risers = merged.sort_values("degisim", ascending=False).head(10)
+    fallers = merged.sort_values("degisim", ascending=True).head(10)
+
+    return prev_exam, risers, fallers
+
+def medal(rank: int) -> str:
+    if rank == 1:
+        return "🥇"
+    if rank == 2:
+        return "🥈"
+    if rank == 3:
+        return "🥉"
+    return ""
+
 # --------------------
 # UI
 # --------------------
 st.title("🏫 Akademik Performans Takip Sistemi (5-8)")
-st.caption("Canva tarzı kartlar • Kademe bazlı ilk 40 • Öğrenci gelişimi • Otomatik yorum")
+st.caption("Deneme ekleme ayrı • Analiz tam genişlik • Kademe bazlı ilk 40 • Öğrenci gelişimi • Değişim analizi")
 
 tab_add, tab_dash = st.tabs(["➕ Deneme Ekle", "📊 Analiz Paneli"])
 
-# -------- Deneme Ekle --------
+# =========================
+# TAB 1: DENEME EKLE
+# =========================
 with tab_add:
     st.markdown('<div class="section-title">Deneme Excel Yükle ve Kaydet</div>', unsafe_allow_html=True)
     st.markdown('<div class="small-note">Her denemeden sonra Excel yükleyip kaydedin. Analiz paneli geçmişi otomatik getirir.</div>', unsafe_allow_html=True)
 
-    uploaded_file = st.file_uploader("Excel (.xlsx)", type=["xlsx"], key="excel_upload")
+    uploaded_file = st.file_uploader("Excel (.xlsx) yükle", type=["xlsx"], key="excel_upload")
+
     if uploaded_file:
         df, exam_name = parse_school_report(uploaded_file)
 
@@ -242,7 +314,7 @@ with tab_add:
             unsafe_allow_html=True
         )
 
-        st.write("### Önizleme")
+        st.write("### Önizleme (ilk 30)")
         st.dataframe(df.head(30), use_container_width=True)
 
         if st.button("✅ Supabase’e Kaydet", type="primary"):
@@ -251,9 +323,11 @@ with tab_add:
                 st.cache_data.clear()
             st.success("Kaydedildi ✅ Analiz Paneli sekmesine geçebilirsin.")
     else:
-        st.info("Excel yükleyerek yeni deneme ekleyebilirsin.")
+        st.info("Yeni deneme eklemek için Excel dosyanı yükle.")
 
-# -------- Analiz Paneli (tam geniş) --------
+# =========================
+# TAB 2: ANALİZ PANELİ
+# =========================
 with tab_dash:
     all_df = fetch_all_results()
     if all_df.empty:
@@ -262,41 +336,60 @@ with tab_dash:
 
     st.markdown('<div class="section-title">Kademe Bazlı Analiz</div>', unsafe_allow_html=True)
 
-    # Üst filtreler (tam geniş)
+    # Üst filtreler
     colA, colB, colC = st.columns([1, 1.6, 1.8])
+
     kademeler = sorted([int(x) for x in all_df["kademe"].dropna().unique()])
     with colA:
         sec_kademe = st.selectbox("Kademe", kademeler)
 
     kdf = all_df[all_df["kademe"] == sec_kademe].copy()
-    exams = sorted([e for e in kdf["exam_name"].dropna().unique()])
+
+    exam_order = get_exam_order(kdf)
+    exams = [e for e in exam_order if pd.notna(e)] if exam_order else sorted([e for e in kdf["exam_name"].dropna().unique()])
+
     with colB:
         sec_exam = st.selectbox("Deneme", exams)
 
     df_exam = kdf[kdf["exam_name"] == sec_exam].copy()
     siniflar = sorted([s for s in df_exam["sinif"].dropna().unique()])
+
     with colC:
         sec_siniflar = st.multiselect("Sınıf", siniflar, default=siniflar)
 
     df_f = df_exam[df_exam["sinif"].isin(sec_siniflar)].copy()
 
-    # KPI Kartları
+    # KPI kartlar
     avg_score = df_f["lgs_puan"].mean() if df_f["lgs_puan"].notna().any() else None
     max_score = df_f["lgs_puan"].max() if df_f["lgs_puan"].notna().any() else None
+    min_score = df_f["lgs_puan"].min() if df_f["lgs_puan"].notna().any() else None
 
     k1, k2, k3, k4 = st.columns(4)
     k1.markdown(f'<div class="kpi-card"><div class="kpi-title">Kademe</div><div class="kpi-value">{sec_kademe}</div><div class="kpi-sub">Seçili kademe</div></div>', unsafe_allow_html=True)
     k2.markdown(f'<div class="kpi-card"><div class="kpi-title">Öğrenci</div><div class="kpi-value">{df_f["ad_soyad"].nunique()}</div><div class="kpi-sub">Filtreli toplam</div></div>', unsafe_allow_html=True)
-    k3.markdown(f'<div class="kpi-card"><div class="kpi-title">Ortalama Puan</div><div class="kpi-value">{avg_score:.2f}</div><div class="kpi-sub">Bu deneme (filtreli)</div></div>' if avg_score is not None else
-              '<div class="kpi-card"><div class="kpi-title">Ortalama Puan</div><div class="kpi-value">—</div><div class="kpi-sub">Veri yok</div></div>', unsafe_allow_html=True)
-    k4.markdown(f'<div class="kpi-card"><div class="kpi-title">En Yüksek Puan</div><div class="kpi-value">{max_score:.2f}</div><div class="kpi-sub">Bu deneme (filtreli)</div></div>' if max_score is not None else
-              '<div class="kpi-card"><div class="kpi-title">En Yüksek Puan</div><div class="kpi-value">—</div><div class="kpi-sub">Veri yok</div></div>', unsafe_allow_html=True)
+    k3.markdown(
+        f'<div class="kpi-card"><div class="kpi-title">Ortalama Puan</div><div class="kpi-value">{avg_score:.2f}</div><div class="kpi-sub">Bu deneme</div></div>'
+        if avg_score is not None else
+        '<div class="kpi-card"><div class="kpi-title">Ortalama Puan</div><div class="kpi-value">—</div><div class="kpi-sub">Veri yok</div></div>',
+        unsafe_allow_html=True
+    )
+    k4.markdown(
+        f'<div class="kpi-card"><div class="kpi-title">Min / Max</div><div class="kpi-value">{min_score:.2f} / {max_score:.2f}</div><div class="kpi-sub">Bu deneme</div></div>'
+        if (min_score is not None and max_score is not None) else
+        '<div class="kpi-card"><div class="kpi-title">Min / Max</div><div class="kpi-value">—</div><div class="kpi-sub">Veri yok</div></div>',
+        unsafe_allow_html=True
+    )
 
-    t1, t2, t3 = st.tabs(["🏅 İlk 40", "📈 Dağılım & Sıralama", "🧑‍🎓 Öğrenci Raporu"])
+    t1, t2, t3, t4 = st.tabs(["🏅 İlk 40", "📈 Dağılım & Sıralama", "🧑‍🎓 Öğrenci", "🚀 Değişim"])
 
-    # --- İlk 40 ---
+    # ---- İlk 40
     with t1:
-        st.markdown(f'<span class="badge">{sec_kademe}. Sınıf</span><span class="badge">{sec_exam}</span><span class="badge">İlk 40</span>', unsafe_allow_html=True)
+        st.markdown(
+            f'<span class="badge">{sec_kademe}. Sınıf</span>'
+            f'<span class="badge">{sec_exam}</span>'
+            f'<span class="badge">İlk 40</span>',
+            unsafe_allow_html=True
+        )
 
         top40 = (
             df_f.dropna(subset=["lgs_puan"])
@@ -304,29 +397,31 @@ with tab_dash:
                .head(40)
                .reset_index(drop=True)
         )
-        # Sıra 1’den başlasın
-        top40.insert(0, "Sıra", range(1, len(top40) + 1))
 
-        show = top40[["Sıra", "ad_soyad", "sinif", "lgs_puan"]].copy()
-        show = show.rename(columns={"ad_soyad": "Ad Soyad", "sinif": "Sınıf", "lgs_puan": "Puan"})
+        # Sıra 1’den başlasın ve rozet
+        top40.insert(0, "Sıra", range(1, len(top40) + 1))
+        top40.insert(1, "🏅", [medal(i) for i in top40["Sıra"].tolist()])
+
+        show = top40[["Sıra", "🏅", "ad_soyad", "sinif", "lgs_puan"]].copy()
+        show.columns = ["Sıra", "Rozet", "Ad Soyad", "Sınıf", "Puan"]
 
         st.dataframe(show, use_container_width=True, hide_index=True)
 
-        # İndirme (Excel)
         st.download_button(
-            "⬇️ İlk 40’ı Excel olarak indir",
+            "⬇️ İlk 40’ı indir (CSV)",
             data=show.to_csv(index=False).encode("utf-8-sig"),
             file_name=f"ilk40_{sec_kademe}_{sec_exam}.csv",
             mime="text/csv"
         )
 
-    # --- Dağılım & Sıralama ---
+    # ---- Dağılım & Sıralama
     with t2:
         if df_f["lgs_puan"].notna().any():
             left, right = st.columns([1.2, 1])
+
             with left:
                 rank_df = df_f[["ad_soyad", "sinif", "lgs_puan"]].dropna().sort_values("lgs_puan", ascending=False)
-                rank_df = rank_df.rename(columns={"ad_soyad": "Ad Soyad", "sinif": "Sınıf", "lgs_puan": "Puan"})
+                rank_df.columns = ["Ad Soyad", "Sınıf", "Puan"]
                 st.dataframe(rank_df, use_container_width=True, hide_index=True)
 
             with right:
@@ -339,27 +434,34 @@ with tab_dash:
         else:
             st.warning("Bu denemede puan verisi yok.")
 
-    # --- Öğrenci ---
+    # ---- Öğrenci
     with t3:
         ogr_list = sorted([s for s in df_f["ad_soyad"].dropna().unique()])
         sec_ogr = st.selectbox("Öğrenci seç", ["(Seçme)"] + ogr_list)
 
         if sec_ogr == "(Seçme)":
-            st.info("Öğrenciyi seçince gelişim grafiği, özet ve yorum görünecek.")
+            st.info("Öğrenci seçince gelişim grafiği ve yorum görünecek.")
         else:
             s = kdf[kdf["ad_soyad"] == sec_ogr].copy().sort_values("created_at")
 
-            # Öğrenci kartı
             last_score = s["lgs_puan"].dropna().iloc[-1] if s["lgs_puan"].notna().any() else None
             first_score = s["lgs_puan"].dropna().iloc[0] if s["lgs_puan"].notna().any() else None
             delta = (last_score - first_score) if (last_score is not None and first_score is not None) else None
 
-            b1, b2, b3 = st.columns([1.2, 1, 1])
-            b1.markdown(f'<div class="kpi-card"><div class="kpi-title">Öğrenci</div><div class="kpi-value">{sec_ogr}</div><div class="kpi-sub">Kademe: {sec_kademe}</div></div>', unsafe_allow_html=True)
-            b2.markdown(f'<div class="kpi-card"><div class="kpi-title">Son Puan</div><div class="kpi-value">{last_score:.2f}</div><div class="kpi-sub">{s["exam_name"].dropna().iloc[-1]}</div></div>' if last_score is not None else
-                        '<div class="kpi-card"><div class="kpi-title">Son Puan</div><div class="kpi-value">—</div><div class="kpi-sub">Veri yok</div></div>', unsafe_allow_html=True)
-            b3.markdown(f'<div class="kpi-card"><div class="kpi-title">Değişim</div><div class="kpi-value">{delta:+.2f}</div><div class="kpi-sub">İlk → Son</div></div>' if delta is not None else
-                        '<div class="kpi-card"><div class="kpi-title">Değişim</div><div class="kpi-value">—</div><div class="kpi-sub">Veri yok</div></div>', unsafe_allow_html=True)
+            a, b, c = st.columns([1.5, 1, 1])
+            a.markdown(f'<div class="kpi-card"><div class="kpi-title">Öğrenci</div><div class="kpi-value">{sec_ogr}</div><div class="kpi-sub">Kademe: {sec_kademe}</div></div>', unsafe_allow_html=True)
+            b.markdown(
+                f'<div class="kpi-card"><div class="kpi-title">Son Puan</div><div class="kpi-value">{last_score:.2f}</div><div class="kpi-sub">Son kayıt</div></div>'
+                if last_score is not None else
+                '<div class="kpi-card"><div class="kpi-title">Son Puan</div><div class="kpi-value">—</div><div class="kpi-sub">Veri yok</div></div>',
+                unsafe_allow_html=True
+            )
+            c.markdown(
+                f'<div class="kpi-card"><div class="kpi-title">Değişim</div><div class="kpi-value">{delta:+.2f}</div><div class="kpi-sub">İlk → Son</div></div>'
+                if delta is not None else
+                '<div class="kpi-card"><div class="kpi-title">Değişim</div><div class="kpi-value">—</div><div class="kpi-sub">Veri yok</div></div>',
+                unsafe_allow_html=True
+            )
 
             left, right = st.columns([1.6, 1])
 
@@ -379,10 +481,40 @@ with tab_dash:
                 show = fmt_df_for_ui(show)
                 st.dataframe(show, use_container_width=True, hide_index=True)
 
+                st.download_button(
+                    "⬇️ Öğrenci Raporu indir (CSV)",
+                    data=show.to_csv(index=False).encode("utf-8-sig"),
+                    file_name=f"{sec_ogr}_rapor.csv",
+                    mime="text/csv"
+                )
+
             with right:
                 st.markdown("### Otomatik Yorum")
                 st.info(auto_comment(s))
-                st.markdown("### Öneri")
-                st.write("- Haftalık tekrar planı (Türkçe/Mat/Fen odaklı)")
-                st.write("- Yanlış analizi: her denemeden sonra 20 dk")
-                st.write("- Süre yönetimi: deneme sırasında bölümleme")
+                st.markdown("### Kısa Öneri")
+                st.write("- Denemeden sonra yanlış analizi (15–20 dk)")
+                st.write("- Haftalık tekrar planı (hedef dersler)")
+                st.write("- Süre yönetimi için bölümleme tekniği")
+
+    # ---- Değişim (Yükselen/Düşen)
+    with t4:
+        st.markdown("### En Çok Yükselen / Düşen Öğrenciler")
+        prev_exam, risers, fallers = compute_risers_fallers(kdf, sec_exam)
+
+        if prev_exam is None:
+            st.info("Bu deneme için karşılaştıracak bir önceki deneme bulunamadı.")
+        else:
+            st.caption(f"Karşılaştırma: **{prev_exam} → {sec_exam}**")
+
+            c1, c2 = st.columns(2)
+            with c1:
+                st.markdown("#### 🚀 En Çok Yükselen 10")
+                show_r = risers[["ad_soyad", "sinif", "lgs_puan_prev", "lgs_puan_cur", "degisim"]].copy()
+                show_r.columns = ["Ad Soyad", "Sınıf", "Önceki Puan", "Son Puan", "Değişim"]
+                st.dataframe(show_r, use_container_width=True, hide_index=True)
+
+            with c2:
+                st.markdown("#### 📉 En Çok Düşen 10")
+                show_f = fallers[["ad_soyad", "sinif", "lgs_puan_prev", "lgs_puan_cur", "degisim"]].copy()
+                show_f.columns = ["Ad Soyad", "Sınıf", "Önceki Puan", "Son Puan", "Değişim"]
+                st.dataframe(show_f, use_container_width=True, hide_index=True)
