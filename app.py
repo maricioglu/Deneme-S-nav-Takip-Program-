@@ -4,6 +4,15 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from supabase import create_client
 
+# PDF (ReportLab)
+from io import BytesIO
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+from reportlab.lib.pagesizes import A4
+from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.lib import colors
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
+
 # --------------------
 # AYARLAR
 # --------------------
@@ -16,7 +25,7 @@ supabase = create_client(SUPABASE_URL, SUPABASE_ANON_KEY)
 TABLE = "lgs_results"
 
 # --------------------
-# STİL (Canva hissi: kartlar/rozetler)
+# STİL (Canva hissi)
 # --------------------
 st.markdown("""
 <style>
@@ -80,16 +89,9 @@ def extract_kademe(sinif: str):
 
 @st.cache_data(show_spinner=False)
 def parse_school_report(uploaded_file):
-    """
-    Cemil Meriç rapor formatı (3 başlık satırı) için:
-    - grp: header_idx-2
-    - top: header_idx-1
-    - sub: header_idx (Öğr.No satırı)
-    """
     raw = pd.read_excel(uploaded_file, header=None)
     raw = raw.dropna(axis=1, how="all")
 
-    # Deneme adı genelde satır 1, kolon 0
     exam_name = "Deneme"
     try:
         v = raw.iloc[1, 0]
@@ -98,7 +100,6 @@ def parse_school_report(uploaded_file):
     except Exception:
         pass
 
-    # Başlık satırını bul
     header_idx = None
     for i in range(len(raw)):
         if str(raw.iloc[i, 0]).strip() == "Öğr.No":
@@ -124,13 +125,10 @@ def parse_school_report(uploaded_file):
         elif j == 2:
             cols.append("Sinif")
         else:
-            # LGS Puan: grup=LGS, top=Puan (sub boş olabilir)
             if g.lower() == "lgs" and t.lower() == "puan":
                 cols.append("LGS_Puan")
-            # Dereceler
             elif t.lower() == "dereceler" and s in ["Sınıf", "Kurum", "İlçe", "İl", "Genel"]:
                 cols.append(f"Derece_{s}")
-            # Ders D/Y/N
             elif s in ["D", "Y", "N"]:
                 cols.append(f"{t}_{s}")
             else:
@@ -144,11 +142,9 @@ def parse_school_report(uploaded_file):
     df.columns = cols
     df = df.dropna(how="all")
 
-    # Ortalama satırlarını çıkar
     first = df["OgrNo"].astype(str)
     df = df[~first.str.contains("Genel Ortalama|Kurum Ortalaması", na=False, regex=True)].copy()
 
-    # pyarrow güvenliği
     df.columns = make_unique_columns(df.columns)
 
     df["OgrNo"] = pd.to_numeric(df["OgrNo"], errors="coerce")
@@ -158,7 +154,6 @@ def parse_school_report(uploaded_file):
     df["Deneme"] = exam_name
     df["Kademe"] = df["Sinif"].apply(extract_kademe)
 
-    # D/Y/N sayısal
     for c in df.columns:
         if c.endswith("_D") or c.endswith("_Y") or c.endswith("_N"):
             df[c] = pd.to_numeric(df[c], errors="coerce")
@@ -173,9 +168,6 @@ def _to_payload(row: pd.Series) -> dict:
     return d
 
 def save_exam_to_supabase(df_exam: pd.DataFrame, exam_name: str):
-    """
-    Aynı exam_name tekrar yüklenirse mükerrer olmasın diye önce silip sonra yazar.
-    """
     supabase.table(TABLE).delete().eq("exam_name", exam_name).execute()
 
     rows = []
@@ -197,12 +189,9 @@ def save_exam_to_supabase(df_exam: pd.DataFrame, exam_name: str):
 
 @st.cache_data(show_spinner=False, ttl=30)
 def fetch_all_results():
-    """
-    Supabase'ten verileri çeker.
-    Not: 'kademe' sütunu yoksa hata alırsın; Supabase'de kolon ekli olmalı.
-    """
+    # payload dahil çekiyoruz (ders netleri + PDF için)
     res = supabase.table(TABLE).select(
-        "exam_name,kademe,ogr_no,ad_soyad,sinif,lgs_puan,created_at"
+        "exam_name,kademe,ogr_no,ad_soyad,sinif,lgs_puan,created_at,payload"
     ).execute()
     return pd.DataFrame(res.data or [])
 
@@ -223,24 +212,7 @@ def auto_comment(student_df: pd.DataFrame) -> str:
         return "🟠 Küçük bir gerileme var. Eksik kazanımlar ve tekrar planı gözden geçirilebilir."
     return "🟦 Puanlar stabil. İlerleme için hedef derslere odaklı plan faydalı olur."
 
-def fmt_df_for_ui(df_in: pd.DataFrame) -> pd.DataFrame:
-    df = df_in.copy()
-    rename_map = {
-        "ad_soyad": "Ad Soyad",
-        "sinif": "Sınıf",
-        "lgs_puan": "Puan",
-        "exam_name": "Deneme",
-        "created_at": "Kayıt Zamanı",
-    }
-    for k, v in rename_map.items():
-        if k in df.columns:
-            df = df.rename(columns={k: v})
-    return df
-
 def get_exam_order(kdf: pd.DataFrame):
-    """
-    Denemeleri created_at'e göre sıraya koyar.
-    """
     if kdf.empty:
         return []
     order = (
@@ -287,11 +259,109 @@ def medal(rank: int) -> str:
         return "🥉"
     return ""
 
+def payload_to_nets(payload: dict) -> dict:
+    """
+    payload içindeki <Ders>_D, <Ders>_Y, <Ders>_N kolonlarından net üretir.
+    Net = D - Y/3
+    """
+    if not isinstance(payload, dict):
+        return {}
+
+    dersler = set()
+    for k in payload.keys():
+        if isinstance(k, str) and (k.endswith("_D") or k.endswith("_Y") or k.endswith("_N")):
+            dersler.add(k.rsplit("_", 1)[0].strip())
+
+    nets = {}
+    for ders in sorted(dersler):
+        d = float(payload.get(f"{ders}_D") or 0)
+        y = float(payload.get(f"{ders}_Y") or 0)
+        nets[ders] = d - (y / 3.0)
+
+    return nets
+
+# ---------- PDF (Arial font) ----------
+def ensure_pdf_font():
+    # Senin koyduğun dosya:
+    font_path = "assets/fonts/arial.ttf"
+    try:
+        pdfmetrics.registerFont(TTFont("ArialTR", font_path))
+        return "ArialTR"
+    except Exception:
+        return None
+
+def build_student_pdf(student_name: str, kademe: int, student_df: pd.DataFrame) -> BytesIO:
+    font_name = ensure_pdf_font()
+    styles = getSampleStyleSheet()
+    if font_name:
+        for k in styles.byName:
+            styles[k].fontName = font_name
+
+    buffer = BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=36, leftMargin=36, topMargin=36, bottomMargin=36)
+
+    elems = []
+    elems.append(Paragraph("Öğrenci Akademik Performans Raporu", styles["Title"]))
+    elems.append(Spacer(1, 10))
+    elems.append(Paragraph(f"<b>Öğrenci:</b> {student_name}", styles["Normal"]))
+    elems.append(Paragraph(f"<b>Kademe:</b> {kademe}", styles["Normal"]))
+    elems.append(Spacer(1, 12))
+
+    # Otomatik yorum
+    elems.append(Paragraph("Kısa Değerlendirme", styles["Heading2"]))
+    elems.append(Paragraph(auto_comment(student_df), styles["Normal"]))
+    elems.append(Spacer(1, 12))
+
+    # Deneme geçmişi tablosu
+    tdf = student_df[["exam_name", "sinif", "lgs_puan", "created_at"]].copy().sort_values("created_at")
+    tdf["lgs_puan"] = tdf["lgs_puan"].apply(lambda x: "-" if pd.isna(x) else f"{x:.2f}")
+
+    table_data = [["Deneme", "Sınıf", "Puan", "Tarih"]] + tdf.values.tolist()
+    tbl = Table(table_data, hAlign="LEFT")
+    tbl.setStyle(TableStyle([
+        ("BACKGROUND", (0,0), (-1,0), colors.lightgrey),
+        ("GRID", (0,0), (-1,-1), 0.25, colors.grey),
+        ("FONTNAME", (0,0), (-1,-1), font_name or "Helvetica"),
+        ("FONTSIZE", (0,0), (-1,-1), 9),
+        ("BOTTOMPADDING", (0,0), (-1,0), 8),
+    ]))
+
+    elems.append(Paragraph("Deneme Geçmişi", styles["Heading2"]))
+    elems.append(tbl)
+    elems.append(Spacer(1, 12))
+
+    # Son deneme ders netleri (tablo olarak)
+    try:
+        last_row = student_df.sort_values("created_at").iloc[-1]
+        nets = payload_to_nets(last_row.get("payload", {}))
+    except Exception:
+        nets = {}
+
+    if nets:
+        net_df = pd.DataFrame({"Ders": list(nets.keys()), "Net": list(nets.values())}).sort_values("Net", ascending=False)
+        net_data = [["Ders", "Net"]] + [[r["Ders"], f'{r["Net"]:.2f}'] for _, r in net_df.iterrows()]
+
+        net_tbl = Table(net_data, hAlign="LEFT")
+        net_tbl.setStyle(TableStyle([
+            ("BACKGROUND", (0,0), (-1,0), colors.whitesmoke),
+            ("GRID", (0,0), (-1,-1), 0.25, colors.grey),
+            ("FONTNAME", (0,0), (-1,-1), font_name or "Helvetica"),
+            ("FONTSIZE", (0,0), (-1,-1), 9),
+            ("BOTTOMPADDING", (0,0), (-1,0), 8),
+        ]))
+
+        elems.append(Paragraph("Son Deneme Ders Bazlı Netler", styles["Heading2"]))
+        elems.append(net_tbl)
+
+    doc.build(elems)
+    buffer.seek(0)
+    return buffer
+
 # --------------------
 # UI
 # --------------------
 st.title("🏫 Akademik Performans Takip Sistemi (5-8)")
-st.caption("Deneme ekleme ayrı • Analiz tam genişlik • Kademe bazlı ilk 40 • Öğrenci gelişimi • Değişim analizi")
+st.caption("Deneme ekleme ayrı • Analiz tam genişlik • Kademe bazlı ilk 40 • Öğrenci gelişimi • PDF rapor")
 
 tab_add, tab_dash = st.tabs(["➕ Deneme Ekle", "📊 Analiz Paneli"])
 
@@ -336,17 +406,15 @@ with tab_dash:
 
     st.markdown('<div class="section-title">Kademe Bazlı Analiz</div>', unsafe_allow_html=True)
 
-    # Üst filtreler
     colA, colB, colC = st.columns([1, 1.6, 1.8])
-
     kademeler = sorted([int(x) for x in all_df["kademe"].dropna().unique()])
+
     with colA:
         sec_kademe = st.selectbox("Kademe", kademeler)
 
     kdf = all_df[all_df["kademe"] == sec_kademe].copy()
-
     exam_order = get_exam_order(kdf)
-    exams = [e for e in exam_order if pd.notna(e)] if exam_order else sorted([e for e in kdf["exam_name"].dropna().unique()])
+    exams = exam_order if exam_order else sorted([e for e in kdf["exam_name"].dropna().unique()])
 
     with colB:
         sec_exam = st.selectbox("Deneme", exams)
@@ -359,7 +427,6 @@ with tab_dash:
 
     df_f = df_exam[df_exam["sinif"].isin(sec_siniflar)].copy()
 
-    # KPI kartlar
     avg_score = df_f["lgs_puan"].mean() if df_f["lgs_puan"].notna().any() else None
     max_score = df_f["lgs_puan"].max() if df_f["lgs_puan"].notna().any() else None
     min_score = df_f["lgs_puan"].min() if df_f["lgs_puan"].notna().any() else None
@@ -382,7 +449,6 @@ with tab_dash:
 
     t1, t2, t3, t4 = st.tabs(["🏅 İlk 40", "📈 Dağılım & Sıralama", "🧑‍🎓 Öğrenci", "🚀 Değişim"])
 
-    # ---- İlk 40
     with t1:
         st.markdown(
             f'<span class="badge">{sec_kademe}. Sınıf</span>'
@@ -397,14 +463,11 @@ with tab_dash:
                .head(40)
                .reset_index(drop=True)
         )
-
-        # Sıra 1’den başlasın ve rozet
         top40.insert(0, "Sıra", range(1, len(top40) + 1))
         top40.insert(1, "🏅", [medal(i) for i in top40["Sıra"].tolist()])
 
         show = top40[["Sıra", "🏅", "ad_soyad", "sinif", "lgs_puan"]].copy()
         show.columns = ["Sıra", "Rozet", "Ad Soyad", "Sınıf", "Puan"]
-
         st.dataframe(show, use_container_width=True, hide_index=True)
 
         st.download_button(
@@ -414,7 +477,6 @@ with tab_dash:
             mime="text/csv"
         )
 
-    # ---- Dağılım & Sıralama
     with t2:
         if df_f["lgs_puan"].notna().any():
             left, right = st.columns([1.2, 1])
@@ -434,13 +496,12 @@ with tab_dash:
         else:
             st.warning("Bu denemede puan verisi yok.")
 
-    # ---- Öğrenci
     with t3:
         ogr_list = sorted([s for s in df_f["ad_soyad"].dropna().unique()])
         sec_ogr = st.selectbox("Öğrenci seç", ["(Seçme)"] + ogr_list)
 
         if sec_ogr == "(Seçme)":
-            st.info("Öğrenci seçince gelişim grafiği ve yorum görünecek.")
+            st.info("Öğrenci seçince gelişim grafiği, ders netleri ve PDF butonu görünecek.")
         else:
             s = kdf[kdf["ad_soyad"] == sec_ogr].copy().sort_values("created_at")
 
@@ -476,9 +537,27 @@ with tab_dash:
                     plt.xticks(rotation=25, ha="right")
                     st.pyplot(fig)
 
+                st.markdown("### Ders Bazlı Netler (Son Deneme)")
+                try:
+                    last_row = s.dropna(subset=["created_at"]).sort_values("created_at").iloc[-1]
+                    nets = payload_to_nets(last_row.get("payload", {}))
+                except Exception:
+                    nets = {}
+
+                if nets:
+                    net_df = pd.DataFrame({"Ders": list(nets.keys()), "Net": list(nets.values())}).sort_values("Net", ascending=False)
+                    fig, ax = plt.subplots()
+                    ax.bar(net_df["Ders"], net_df["Net"])
+                    ax.set_xlabel("Ders")
+                    ax.set_ylabel("Net")
+                    plt.xticks(rotation=35, ha="right")
+                    st.pyplot(fig)
+                else:
+                    st.info("Ders netleri bulunamadı (payload boş olabilir).")
+
                 st.markdown("### Deneme Kayıtları")
                 show = s[["exam_name", "sinif", "lgs_puan", "created_at"]].copy()
-                show = fmt_df_for_ui(show)
+                show.columns = ["Deneme", "Sınıf", "Puan", "Kayıt Zamanı"]
                 st.dataframe(show, use_container_width=True, hide_index=True)
 
                 st.download_button(
@@ -491,12 +570,21 @@ with tab_dash:
             with right:
                 st.markdown("### Otomatik Yorum")
                 st.info(auto_comment(s))
+
+                # PDF butonu
+                pdf_buf = build_student_pdf(sec_ogr, sec_kademe, s)
+                st.download_button(
+                    "📄 PDF Raporu İndir",
+                    data=pdf_buf,
+                    file_name=f"{sec_ogr}_rapor.pdf",
+                    mime="application/pdf"
+                )
+
                 st.markdown("### Kısa Öneri")
                 st.write("- Denemeden sonra yanlış analizi (15–20 dk)")
                 st.write("- Haftalık tekrar planı (hedef dersler)")
                 st.write("- Süre yönetimi için bölümleme tekniği")
 
-    # ---- Değişim (Yükselen/Düşen)
     with t4:
         st.markdown("### En Çok Yükselen / Düşen Öğrenciler")
         prev_exam, risers, fallers = compute_risers_fallers(kdf, sec_exam)

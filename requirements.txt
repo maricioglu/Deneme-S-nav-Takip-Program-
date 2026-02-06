@@ -1,5 +1,7 @@
 streamlit
+pandas
 matplotlib
 supabase
-reportlab
 openpyxl
+reportlab
+pillow
