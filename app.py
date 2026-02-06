@@ -6,12 +6,13 @@ from supabase import create_client
 
 # PDF (ReportLab)
 from io import BytesIO
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image as RLImage
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.lib import colors
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
+from reportlab.platypus import Image as RLImage
 
 # --------------------
 # AYARLAR
@@ -289,6 +290,13 @@ def ensure_pdf_font():
     except Exception:
         return None
 
+def fig_to_rl_image(fig, width=520, height=220):
+    buf = BytesIO()
+    fig.savefig(buf, format="png", dpi=160, bbox_inches="tight")
+    plt.close(fig)
+    buf.seek(0)
+    return RLImage(buf, width=width, height=height)
+
 def build_student_pdf(student_name: str, kademe: int, student_df: pd.DataFrame) -> BytesIO:
     font_name = ensure_pdf_font()
     styles = getSampleStyleSheet()
@@ -309,6 +317,20 @@ def build_student_pdf(student_name: str, kademe: int, student_df: pd.DataFrame) 
     # Otomatik yorum
     elems.append(Paragraph("Kısa Değerlendirme", styles["Heading2"]))
     elems.append(Paragraph(auto_comment(student_df), styles["Normal"]))
+    elems.append(Spacer(1, 12))
+# --- Puan Trend Grafiği ---
+score_series = student_df.sort_values("created_at")[["exam_name", "lgs_puan"]].dropna()
+if not score_series.empty:
+    fig, ax = plt.subplots(figsize=(7.2, 3.0))
+    ax.plot(score_series["exam_name"], score_series["lgs_puan"], marker="o")
+    ax.set_title("Denemelere Göre Puan Gelişimi")
+    ax.set_xlabel("Deneme")
+    ax.set_ylabel("Puan")
+    plt.xticks(rotation=25, ha="right")
+    plt.tight_layout()
+
+    elems.append(Paragraph("Puan Gelişimi", styles["Heading2"]))
+    elems.append(fig_to_rl_image(fig, width=520, height=220))
     elems.append(Spacer(1, 12))
 
     # Deneme geçmişi tablosu
@@ -351,6 +373,19 @@ def build_student_pdf(student_name: str, kademe: int, student_df: pd.DataFrame) 
 
         elems.append(Paragraph("Son Deneme Ders Bazlı Netler", styles["Heading2"]))
         elems.append(net_tbl)
+    # --- Net Bar Grafiği (PDF) ---
+    fig2, ax2 = plt.subplots(figsize=(7.2, 3.0))
+    ax2.bar(net_df["Ders"], net_df["Net"])
+    ax2.set_title("Son Deneme Ders Bazlı Netler")
+    ax2.set_xlabel("Ders")
+    ax2.set_ylabel("Net")
+    plt.xticks(rotation=35, ha="right")
+    plt.tight_layout()
+
+    elems.append(Spacer(1, 10))
+    elems.append(fig_to_rl_image(fig2, width=520, height=220))
+    elems.append(Spacer(1, 8))
+
 
     doc.build(elems)
     buffer.seek(0)
