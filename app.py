@@ -282,13 +282,13 @@ def payload_to_nets(payload: dict) -> dict:
 
 # ---------- PDF (Arial font) ----------
 def ensure_pdf_font():
-    # Senin koyduğun dosya:
-    font_path = "assets/fonts/arial.ttf"
+    font_path = "assets/fonts/DejaVuSans.ttf"
     try:
-        pdfmetrics.registerFont(TTFont("ArialTR", font_path))
-        return "ArialTR"
+        pdfmetrics.registerFont(TTFont("TRFont", font_path))
+        return "TRFont"
     except Exception:
         return None
+
 
 def build_student_pdf(student_name: str, kademe: int, student_df: pd.DataFrame) -> BytesIO:
     font_name = ensure_pdf_font()
