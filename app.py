@@ -289,7 +289,6 @@ def ensure_pdf_font():
     except Exception:
         return None
 
-
 def build_student_pdf(student_name: str, kademe: int, student_df: pd.DataFrame) -> BytesIO:
     font_name = ensure_pdf_font()
     styles = getSampleStyleSheet()
