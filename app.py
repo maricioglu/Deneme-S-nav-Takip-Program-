@@ -464,6 +464,7 @@ def build_top40_pdf(kademe: int, exam_name: str, top40_df: pd.DataFrame) -> Byte
 # UI
 # --------------------
 st.title("🏫 Akademik Performans Takip Sistemi (5-8)")
+st.error("✅ YENİ SÜRÜM TESTİ: Eğer bunu görüyorsan app.py güncellendi!")
 st.caption("Deneme ekleme ayrı • Analiz tam genişlik • Kademe bazlı ilk 40 • Öğrenci gelişimi • PDF rapor")
 
 tab_add, tab_dash = st.tabs(["➕ Deneme Ekle", "📊 Analiz Paneli"])
