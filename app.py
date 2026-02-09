@@ -9,7 +9,7 @@ from io import BytesIO
 from reportlab.platypus import (
     SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image as RLImage
 )
-from reportlab.lib.pagesizes import A4
+from reportlab.lib.pagesizes import A4, landscape
 from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.lib import colors
 from reportlab.pdfbase import pdfmetrics
@@ -33,6 +33,7 @@ TABLE = "lgs_results"
 # --------------------
 st.markdown("""
 <style>
+.main .block-container {max-width: 1200px; padding-top: 1.2rem;}
 .kpi-card{
   border:1px solid rgba(255,255,255,0.12);
   border-radius:16px;
@@ -264,16 +265,6 @@ def compute_risers_fallers(kdf: pd.DataFrame, current_exam: str):
     return prev_exam, risers, fallers
 
 
-def medal(rank: int) -> str:
-    if rank == 1:
-        return "🥇"
-    if rank == 2:
-        return "🥈"
-    if rank == 3:
-        return "🥉"
-    return ""
-
-
 def payload_to_nets(payload: dict) -> dict:
     if not isinstance(payload, dict):
         return {}
@@ -293,10 +284,10 @@ def payload_to_nets(payload: dict) -> dict:
 
 
 # --------------------
-# PDF HELPERS (FONT + FIG IMAGE)
+# PDF HELPERS
 # --------------------
 def ensure_pdf_font():
-    # FONT: assets/fonts/DejaVuSans.ttf
+    # Türkçe font: assets/fonts/DejaVuSans.ttf
     font_path = "assets/fonts/DejaVuSans.ttf"
     try:
         pdfmetrics.registerFont(TTFont("TRFont", font_path))
@@ -330,12 +321,10 @@ def build_student_pdf(student_name: str, kademe: int, student_df: pd.DataFrame) 
     elems.append(Paragraph(f"<b>Kademe:</b> {kademe}", styles["Normal"]))
     elems.append(Spacer(1, 10))
 
-    # Otomatik yorum
     elems.append(Paragraph("Kısa Değerlendirme", styles["Heading2"]))
     elems.append(Paragraph(auto_comment(student_df), styles["Normal"]))
     elems.append(Spacer(1, 12))
 
-    # Deneme geçmişi tablosu
     tdf = student_df[["exam_name", "sinif", "lgs_puan", "created_at"]].copy().sort_values("created_at")
     tdf["created_at"] = pd.to_datetime(tdf["created_at"], errors="coerce").dt.strftime("%d.%m.%Y %H:%M")
     tdf["created_at"] = tdf["created_at"].fillna("-")
@@ -355,7 +344,7 @@ def build_student_pdf(student_name: str, kademe: int, student_df: pd.DataFrame) 
     elems.append(tbl)
     elems.append(Spacer(1, 12))
 
-    # --- Puan trend grafiği (PDF) ---
+    # Puan trend grafiği
     score_series = student_df.sort_values("created_at")[["exam_name", "lgs_puan"]].dropna()
     if not score_series.empty:
         fig, ax = plt.subplots(figsize=(7.2, 3.0))
@@ -370,7 +359,7 @@ def build_student_pdf(student_name: str, kademe: int, student_df: pd.DataFrame) 
         elems.append(fig_to_rl_image(fig, width=520, height=220))
         elems.append(Spacer(1, 12))
 
-    # --- Son deneme ders netleri (tablo + grafik) ---
+    # Son deneme ders netleri (tablo + grafik)
     try:
         last_row = student_df.sort_values("created_at").iloc[-1]
         nets = payload_to_nets(last_row.get("payload", {}))
@@ -418,26 +407,54 @@ def build_top40_pdf(kademe: int, exam_name: str, top40_df: pd.DataFrame) -> Byte
             styles[k].fontName = font_name
 
     buffer = BytesIO()
-    doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=36, leftMargin=36, topMargin=36, bottomMargin=36)
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=landscape(A4),     # ✅ tek sayfa için yatay
+        rightMargin=24, leftMargin=24, topMargin=18, bottomMargin=18
+    )
 
     elems = []
-    elems.append(Paragraph("İlk 40 Öğrenci Listesi", styles["Title"]))
+    title = f"İLK 40 BAŞARI LİSTESİ  |  {kademe}. Sınıf  |  {exam_name}"
+    elems.append(Paragraph(title, styles["Title"]))
     elems.append(Spacer(1, 8))
-    elems.append(Paragraph(f"<b>Kademe:</b> {kademe}", styles["Normal"]))
-    elems.append(Paragraph(f"<b>Deneme:</b> {exam_name}", styles["Normal"]))
-    elems.append(Spacer(1, 12))
 
-    table_data = [list(top40_df.columns)] + top40_df.values.tolist()
-    tbl = Table(table_data, hAlign="LEFT")
-    tbl.setStyle(TableStyle([
-        ("BACKGROUND", (0,0), (-1,0), colors.lightgrey),
-        ("GRID", (0,0), (-1,-1), 0.25, colors.grey),
-        ("FONTNAME", (0,0), (-1,-1), font_name or "Helvetica"),
-        ("FONTSIZE", (0,0), (-1,-1), 9),
-        ("BOTTOMPADDING", (0,0), (-1,0), 8),
-    ]))
+    tdf = top40_df.copy()
+    if "Puan" in tdf.columns:
+        tdf["Puan"] = tdf["Puan"].apply(lambda x: "-" if pd.isna(x) else f"{float(x):.2f}")
 
+    table_data = [list(tdf.columns)] + tdf.values.tolist()
+    tbl = Table(table_data, hAlign="CENTER")
+
+    style_cmds = [
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1f4e79")),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+        ("FONTNAME", (0, 0), (-1, -1), font_name or "Helvetica"),
+        ("FONTSIZE", (0, 0), (-1, 0), 10),
+        ("FONTSIZE", (0, 1), (-1, -1), 9),
+        ("ALIGN", (0, 0), (-1, 0), "CENTER"),
+        ("ALIGN", (0, 1), (1, -1), "CENTER"),       # Sıra + Okul No
+        ("ALIGN", (-1, 1), (-1, -1), "CENTER"),     # Puan
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("GRID", (0, 0), (-1, -1), 0.3, colors.HexColor("#9aa7b2")),
+        ("BOTTOMPADDING", (0, 0), (-1, 0), 8),
+        ("TOPPADDING", (0, 0), (-1, 0), 8),
+        ("LEFTPADDING", (0, 0), (-1, -1), 6),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+    ]
+
+    # zebra
+    for r in range(1, len(table_data)):
+        bg = colors.HexColor("#f3f6fb") if r % 2 == 0 else colors.white
+        style_cmds.append(("BACKGROUND", (0, r), (-1, r), bg))
+
+    # ilk 3 vurgu
+    for r in [1, 2, 3]:
+        if r < len(table_data):
+            style_cmds.append(("BACKGROUND", (0, r), (-1, r), colors.HexColor("#fff2cc")))
+
+    tbl.setStyle(TableStyle(style_cmds))
     elems.append(tbl)
+
     doc.build(elems)
     buffer.seek(0)
     return buffer
@@ -537,20 +554,46 @@ with tab_dash:
 
     t1, t2, t3, t4 = st.tabs(["🏅 İlk 40", "📈 Dağılım & Sıralama", "🧑‍🎓 Öğrenci", "🚀 Değişim"])
 
+    # -------------------------
+    # TOP 40 (İstenen şekilde)
+    # -------------------------
     with t1:
+        st.markdown(
+            f'<span class="badge">{sec_kademe}. Sınıf</span>'
+            f'<span class="badge">{sec_exam}</span>'
+            f'<span class="badge">İlk 40</span>',
+            unsafe_allow_html=True
+        )
+
         top40 = (
             df_f.dropna(subset=["lgs_puan"])
                .sort_values("lgs_puan", ascending=False)
                .head(40)
                .reset_index(drop=True)
         )
+
+        # Sıra 1'den başlasın
         top40.insert(0, "Sıra", range(1, len(top40) + 1))
-        top40.insert(1, "🏅", [medal(i) for i in top40["Sıra"].tolist()])
 
-        show = top40[["Sıra", "🏅", "ad_soyad", "sinif", "lgs_puan"]].copy()
-        show.columns = ["Sıra", "Rozet", "Ad Soyad", "Sınıf", "Puan"]
-        st.dataframe(show, use_container_width=True, hide_index=True)
+        # İlk 3'e madalya: ayrı sütun yok, isim yanında
+        def name_with_medal(row):
+            r = int(row["Sıra"])
+            m = "🥇 " if r == 1 else "🥈 " if r == 2 else "🥉 " if r == 3 else ""
+            return m + str(row.get("ad_soyad", "")).strip()
 
+        top40["Ad Soyad"] = top40.apply(name_with_medal, axis=1)
+
+        # Okul No eklensin
+        show = top40[["Sıra", "ogr_no", "Ad Soyad", "sinif", "lgs_puan"]].copy()
+        show.columns = ["Sıra", "Okul No", "Ad Soyad", "Sınıf", "Puan"]
+        show["Puan"] = pd.to_numeric(show["Puan"], errors="coerce").round(2)
+
+        # Ortalanmış görünüm
+        padL, center, padR = st.columns([1, 8, 1])
+        with center:
+            st.dataframe(show, use_container_width=True, hide_index=True)
+
+        # CSV indir
         st.download_button(
             "⬇️ İlk 40’ı indir (CSV)",
             data=show.to_csv(index=False).encode("utf-8-sig"),
@@ -558,9 +601,10 @@ with tab_dash:
             mime="text/csv"
         )
 
+        # Tek sayfa, renkli PDF indir
         top40_pdf = build_top40_pdf(sec_kademe, sec_exam, show)
         st.download_button(
-            "📄 İlk 40 PDF İndir",
+            "📄 İlk 40 PDF İndir (Tek Sayfa)",
             data=top40_pdf,
             file_name=f"ilk40_{sec_kademe}_{sec_exam}.pdf",
             mime="application/pdf"
@@ -571,8 +615,8 @@ with tab_dash:
             left, right = st.columns([1.2, 1])
 
             with left:
-                rank_df = df_f[["ad_soyad", "sinif", "lgs_puan"]].dropna().sort_values("lgs_puan", ascending=False)
-                rank_df.columns = ["Ad Soyad", "Sınıf", "Puan"]
+                rank_df = df_f[["ogr_no", "ad_soyad", "sinif", "lgs_puan"]].dropna().sort_values("lgs_puan", ascending=False)
+                rank_df.columns = ["Okul No", "Ad Soyad", "Sınıf", "Puan"]
                 st.dataframe(rank_df, use_container_width=True, hide_index=True)
 
             with right:
@@ -645,9 +689,9 @@ with tab_dash:
                     st.info("Ders netleri bulunamadı (payload boş olabilir).")
 
                 st.markdown("### Deneme Kayıtları")
-                show = s[["exam_name", "sinif", "lgs_puan", "created_at"]].copy()
-                show.columns = ["Deneme", "Sınıf", "Puan", "Kayıt Zamanı"]
-                st.dataframe(show, use_container_width=True, hide_index=True)
+                show_s = s[["exam_name", "sinif", "lgs_puan", "created_at"]].copy()
+                show_s.columns = ["Deneme", "Sınıf", "Puan", "Kayıt Zamanı"]
+                st.dataframe(show_s, use_container_width=True, hide_index=True)
 
             with right:
                 st.markdown("### Otomatik Yorum")
