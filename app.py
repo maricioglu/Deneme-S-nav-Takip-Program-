@@ -329,7 +329,10 @@ def build_student_pdf(student_name: str, kademe: int, student_df: pd.DataFrame) 
 
 def build_top40_pdf(kademe: int, exam_name: str, top40_df: pd.DataFrame) -> BytesIO:
     """
-    Tek sayfaya sığdırma + logo + PDF uyumlu madalya (emoji yok -> ★ + renk)
+    TEK SAYFA PDF:
+    - A4 yatay
+    - satır yükseklikleri sabit (tek sayfaya sığar)
+    - emoji yerine ALTIN/GÜMÜŞ/BRONZ yazısı (garanti görünür)
     """
     font_name = ensure_pdf_font()
     styles = getSampleStyleSheet()
@@ -341,96 +344,104 @@ def build_top40_pdf(kademe: int, exam_name: str, top40_df: pd.DataFrame) -> Byte
     doc = SimpleDocTemplate(
         buffer,
         pagesize=landscape(A4),
-        rightMargin=10, leftMargin=10, topMargin=8, bottomMargin=8
+        rightMargin=8, leftMargin=8, topMargin=6, bottomMargin=6
     )
 
     elems = []
-    # Header
+
+    # Header (logo + başlık)
     if os.path.exists(LOGO_PATH):
-        logo = RLImage(LOGO_PATH, width=50, height=50)
+        logo = RLImage(LOGO_PATH, width=45, height=45)
         title = Paragraph(
             f"<b>Cemil Meriç Ortaokulu</b><br/>"
             f"İlk 40 Başarı Listesi — <b>{kademe}. Sınıf</b><br/>"
             f"Deneme: <b>{exam_name}</b>",
             styles["Normal"]
         )
-        h = Table([[logo, title]], colWidths=[60, 740])
-        h.setStyle(TableStyle([("VALIGN", (0,0), (-1,-1), "MIDDLE"), ("LEFTPADDING",(0,0),(-1,-1),0)]))
+        h = Table([[logo, title]], colWidths=[55, 745])
+        h.setStyle(TableStyle([
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("LEFTPADDING", (0, 0), (-1, -1), 0),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+        ]))
         elems.append(h)
     else:
         elems.append(Paragraph(f"İlk 40 — {kademe}. Sınıf — {exam_name}", styles["Title"]))
 
-    elems.append(Spacer(1, 6))
+    elems.append(Spacer(1, 4))
 
     tdf = top40_df.copy()
 
-    # Puan format
+    # Puan formatı
     if "Puan" in tdf.columns:
         tdf["Puan"] = tdf["Puan"].apply(lambda x: "" if pd.isna(x) else f"{float(x):.2f}")
 
-    # PDF'de emoji görünmeyebilir -> ★ ile garanti
+    # PDF'de emoji kare çıkar -> temizle
+    if "Ad Soyad" in tdf.columns:
+        tdf["Ad Soyad"] = tdf["Ad Soyad"].astype(str)
+        for bad in ["🥇", "🥈", "🥉", "🏅", "★"]:
+            tdf["Ad Soyad"] = tdf["Ad Soyad"].str.replace(bad, "", regex=False)
+        tdf["Ad Soyad"] = tdf["Ad Soyad"].str.strip()
+
+    # Madalya yazısı ekle (PDF uyumlu)
     if "Sıra" in tdf.columns and "Ad Soyad" in tdf.columns:
-        def add_star(row):
+        def add_medal_text(row):
             try:
                 r = int(row["Sıra"])
             except Exception:
                 return str(row["Ad Soyad"])
-            return ("★ " if r in (1,2,3) else "") + str(row["Ad Soyad"])
-        tdf["Ad Soyad"] = tdf.apply(add_star, axis=1)
+            medal = "ALTIN  " if r == 1 else "GÜMÜŞ  " if r == 2 else "BRONZ  " if r == 3 else ""
+            return medal + str(row["Ad Soyad"])
+        tdf["Ad Soyad"] = tdf.apply(add_medal_text, axis=1)
 
+    # Tablo verisi
     table_data = [list(tdf.columns)] + tdf.values.tolist()
 
-    # Kolon genişlikleri (tek sayfa)
+    # Kolon genişlikleri (tek sayfa - biraz daha sıkı)
     col_widths = []
     for col in tdf.columns:
         if col == "Sıra":
-            col_widths.append(30)
+            col_widths.append(28)
         elif col == "Okul No":
-            col_widths.append(65)
-        elif col == "Ad Soyad":
-            col_widths.append(330)
-        elif col == "Sınıf":
-            col_widths.append(80)
-        elif col == "Puan":
             col_widths.append(60)
+        elif col == "Ad Soyad":
+            col_widths.append(310)
+        elif col == "Sınıf":
+            col_widths.append(55)
+        elif col == "Puan":
+            col_widths.append(55)
+        elif col == "Deneme Sayısı":
+            col_widths.append(70)
         else:
-            col_widths.append(80)
+            col_widths.append(60)
 
-    tbl = Table(table_data, colWidths=col_widths, hAlign="CENTER")
+    # Satır yüksekliklerini sabitle (TEK SAYFA için kritik)
+    # Header 12, içerik 10
+    row_heights = [12] + [10] * (len(table_data) - 1)
+
+    tbl = Table(table_data, colWidths=col_widths, rowHeights=row_heights, hAlign="CENTER")
 
     style_cmds = [
         ("BACKGROUND", (0,0), (-1,0), colors.HexColor("#0F2D52")),
         ("TEXTCOLOR", (0,0), (-1,0), colors.white),
         ("FONTNAME", (0,0), (-1,-1), font_name or "Helvetica"),
-        ("FONTSIZE", (0,0), (-1,0), 8),
-        ("FONTSIZE", (0,1), (-1,-1), 7),
+        ("FONTSIZE", (0,0), (-1,0), 7),     # başlık
+        ("FONTSIZE", (0,1), (-1,-1), 6),    # içerik (daha küçük = tek sayfa)
         ("GRID", (0,0), (-1,-1), 0.25, colors.HexColor("#9aa7b2")),
         ("ALIGN", (0,0), (-1,0), "CENTER"),
         ("ALIGN", (0,1), (1,-1), "CENTER"),
         ("ALIGN", (-1,1), (-1,-1), "CENTER"),
         ("VALIGN", (0,0), (-1,-1), "MIDDLE"),
-        ("TOPPADDING", (0,0), (-1,-1), 1),
-        ("BOTTOMPADDING", (0,0), (-1,-1), 1),
+        ("TOPPADDING", (0,0), (-1,-1), 0),
+        ("BOTTOMPADDING", (0,0), (-1,-1), 0),
         ("LEFTPADDING", (0,0), (-1,-1), 2),
         ("RIGHTPADDING", (0,0), (-1,-1), 2),
     ]
 
-    # zebra
+    # zebra satır
     for r in range(1, len(table_data)):
         bg = colors.HexColor("#F3F6FB") if r % 2 == 0 else colors.white
         style_cmds.append(("BACKGROUND", (0,r), (-1,r), bg))
-
-    # İlk 3 renk (Ad Soyad sütunu)
-    try:
-        name_col = list(tdf.columns).index("Ad Soyad")
-    except Exception:
-        name_col = 2
-    if len(table_data) > 1:
-        style_cmds.append(("TEXTCOLOR", (name_col,1), (name_col,1), colors.HexColor("#B8860B")))  # altın
-    if len(table_data) > 2:
-        style_cmds.append(("TEXTCOLOR", (name_col,2), (name_col,2), colors.HexColor("#708090")))  # gümüş
-    if len(table_data) > 3:
-        style_cmds.append(("TEXTCOLOR", (name_col,3), (name_col,3), colors.HexColor("#8B4513")))  # bronz
 
     tbl.setStyle(TableStyle(style_cmds))
     elems.append(tbl)
