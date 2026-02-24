@@ -606,59 +606,51 @@ with tab_dash:
         top40.insert(0, "Sıra", range(1, len(top40) + 1))
 
 
-        # Ekranda gösterilecek tablo
         # --- Top40 tabloyu güvenli şekilde oluştur (kolon adı farklarını tolere eder) ---
+        t = top40.copy()
 
-# top40 içinde hangi isimler var kontrol edip tek bir standarda çekiyoruz
-t = top40.copy()
+        # Kolon adlarını standarda çek
+        rename_map = {}
+        if "ogr_no" in t.columns: rename_map["ogr_no"] = "Okul No"
+        if "okul_no" in t.columns: rename_map["okul_no"] = "Okul No"
+        if "ad_soyad" in t.columns: rename_map["ad_soyad"] = "Ad Soyad"
+        if "Ad Soyad" in t.columns: rename_map["Ad Soyad"] = "Ad Soyad"
+        if "sinif" in t.columns: rename_map["sinif"] = "Sınıf"
+        if "Sınıf" in t.columns: rename_map["Sınıf"] = "Sınıf"
+        if "lgs_puan" in t.columns: rename_map["lgs_puan"] = "Puan"
+        if "Puan" in t.columns: rename_map["Puan"] = "Puan"
+        if "deneme_sayisi" in t.columns: rename_map["deneme_sayisi"] = "Deneme Sayısı"
+        if "Deneme Sayısı" in t.columns: rename_map["Deneme Sayısı"] = "Deneme Sayısı"
+        if "denemeler" in t.columns: rename_map["denemeler"] = "Denemeler"
+        if "Denemeler" in t.columns: rename_map["Denemeler"] = "Denemeler"
+        if "denemeler_kisa" in t.columns: rename_map["denemeler_kisa"] = "Denemeler (Kısa)"
+        if "Denemeler (Kısa)" in t.columns: rename_map["Denemeler (Kısa)"] = "Denemeler (Kısa)"
+        t = t.rename(columns=rename_map)
 
-# bazı yerlerde kolon adları farklı olabiliyor -> normalize
-rename_map = {}
-if "ogr_no" in t.columns: rename_map["ogr_no"] = "Okul No"
-if "okul_no" in t.columns: rename_map["okul_no"] = "Okul No"
+        # Gösterim: ekranda tam liste, PDF'de kısa liste kullanacağız
+        wanted = ["Sıra", "Okul No", "Ad Soyad", "Sınıf", "Puan"]
+        if sec_exam == ALL_LABEL:
+            if "Deneme Sayısı" in t.columns: wanted.append("Deneme Sayısı")
+            if "Denemeler" in t.columns: wanted.append("Denemeler")
+        cols_available = [c for c in wanted if c in t.columns]
+        show = t[cols_available].copy()
 
-if "ad_soyad" in t.columns: rename_map["ad_soyad"] = "Ad Soyad"
-if "Ad Soyad" in t.columns: rename_map["Ad Soyad"] = "Ad Soyad"
+        if "Puan" in show.columns:
+            show["Puan"] = pd.to_numeric(show["Puan"], errors="coerce").round(2)
 
-if "sinif" in t.columns: rename_map["sinif"] = "Sınıf"
-if "Sınıf" in t.columns: rename_map["Sınıf"] = "Sınıf"
+        st.dataframe(show, use_container_width=True, hide_index=True)
 
-if "lgs_puan" in t.columns: rename_map["lgs_puan"] = "Puan"
-if "Puan" in t.columns: rename_map["Puan"] = "Puan"
-
-# deneme sayısı / deneme listesi kolonları
-if "deneme_sayisi" in t.columns: rename_map["deneme_sayisi"] = "Deneme Sayısı"
-if "Deneme Sayısı" in t.columns: rename_map["Deneme Sayısı"] = "Deneme Sayısı"
-
-if "denemeler_kisa" in t.columns: rename_map["denemeler_kisa"] = "Denemeler"
-if "Denemeler" in t.columns: rename_map["Denemeler"] = "Denemeler"
-
-t = t.rename(columns=rename_map)
-
-# Sıra kolonu yoksa üret
-if "Sıra" not in t.columns:
-    t = t.reset_index(drop=True)
-    t.insert(0, "Sıra", range(1, len(t) + 1))
-
-# gösterilecek kolonlar: olanları al
-wanted = ["Sıra", "Okul No", "Ad Soyad", "Sınıf", "Puan"]
-if sec_exam == ALL_LABEL:  # tüm denemeler ortalama modunda ek kolonlar
-    wanted += ["Deneme Sayısı", "Denemeler"]
-
-cols_available = [c for c in wanted if c in t.columns]
-show = t[cols_available].copy()
-
-# puanı yuvarla (varsa)
-if "Puan" in show.columns:
-    show["Puan"] = pd.to_numeric(show["Puan"], errors="coerce").round(2)
-
-st.dataframe(show, use_container_width=True, hide_index=True)
-
-        # PDF için: denemeler kısa olsun (tek sayfayı korur)
+        # PDF için: Denemeler kısa (tek sayfayı korur)
         pdf_df = show.copy()
-        if "Denemeler" in pdf_df.columns and sec_exam == ALL_LABEL:
-            pdf_df["Denemeler"] = top40["denemeler_kisa"].values
-
+        if sec_exam == ALL_LABEL:
+            if "Denemeler (Kısa)" in t.columns:
+                # PDF'de kısa listeyi koy
+                if "Denemeler" in pdf_df.columns:
+                    pdf_df["Denemeler"] = t["Denemeler (Kısa)"].values
+                else:
+                    pdf_df["Denemeler"] = t["Denemeler (Kısa)"].values
+            # PDF'de tam listeyi basmak taşırabilir; o yüzden kısa
+        
         pdf_exam_name = sec_exam if sec_exam != ALL_LABEL else "TÜM DENEMELER ORTALAMASI"
         top40_pdf = build_top40_pdf(sec_kademe, pdf_exam_name, pdf_df)
 
