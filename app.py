@@ -32,15 +32,62 @@ FONT_PATH = "assets/fonts/DejaVuSans.ttf"  # Türkçe için
 # --------------------
 st.markdown("""
 <style>
-.main .block-container {max-width: 1280px; padding-top: 1.2rem;}
-.kpi-card{border:1px solid rgba(255,255,255,0.12);border-radius:16px;padding:14px 16px;background: rgba(255,255,255,0.03);}
-.kpi-title{font-size:12px;opacity:0.80;margin-bottom:6px;}
-.kpi-value{font-size:24px;font-weight:800;line-height:1.1;}
-.kpi-sub{font-size:12px;opacity:0.75;margin-top:6px;}
-.badge{display:inline-block;padding:6px 10px;border-radius:999px;border:1px solid rgba(255,255,255,0.16);
-background: rgba(255,255,255,0.04);font-size:12px;margin-right:6px;margin-bottom:6px;}
-.section-title{font-size:18px;font-weight:900;margin:0.2rem 0 0.6rem 0;}
-.small-note{font-size:12px;opacity:0.75;}
+/* Layout */
+.main .block-container {max-width: 1280px; padding-top: 1.2rem; padding-bottom: 2.2rem;}
+/* Soft background */
+.stApp {
+  background:
+    radial-gradient(1100px 600px at 8% 10%, rgba(0, 122, 255, 0.10), transparent 55%),
+    radial-gradient(900px 500px at 92% 18%, rgba(255, 153, 0, 0.10), transparent 55%),
+    radial-gradient(1000px 700px at 50% 100%, rgba(0, 200, 150, 0.08), transparent 60%);
+}
+/* Card look */
+.card {
+  border: 1px solid rgba(255,255,255,0.10);
+  border-radius: 18px;
+  padding: 14px 16px;
+  background: rgba(255,255,255,0.04);
+  box-shadow: 0 8px 24px rgba(0,0,0,0.08);
+}
+.kpi-row {display:flex; gap:12px; flex-wrap:wrap;}
+.kpi-card{flex:1; min-width:220px;}
+.kpi-title{font-size:12px; opacity:.75; margin-bottom:4px;}
+.kpi-value{font-size:28px; font-weight:800; letter-spacing:0.2px;}
+.kpi-sub{font-size:12px; opacity:.65; margin-top:2px;}
+/* Section header */
+.section-title{
+  font-size: 15px;
+  font-weight: 800;
+  margin: 8px 0 10px 0;
+  display:flex; align-items:center; gap:8px;
+}
+.badge{
+  display:inline-block;
+  padding: 2px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  background: rgba(255,255,255,0.08);
+  border: 1px solid rgba(255,255,255,0.10);
+}
+/* Buttons */
+.stButton>button, .stDownloadButton>button{
+  border-radius: 12px !important;
+  padding: 0.55rem 0.9rem !important;
+  font-weight: 700 !important;
+}
+/* Tabs */
+.stTabs [data-baseweb="tab-list"] {gap: 6px;}
+.stTabs [data-baseweb="tab"]{
+  border-radius: 12px !important;
+  padding: 10px 14px !important;
+  background: rgba(255,255,255,0.05);
+}
+.stTabs [aria-selected="true"]{
+  background: rgba(0,122,255,0.18) !important;
+  border: 1px solid rgba(0,122,255,0.25) !important;
+}
+/* Dataframe nicer */
+[data-testid="stDataFrame"] {border-radius: 14px; overflow:hidden; border: 1px solid rgba(255,255,255,0.10);}
 </style>
 """, unsafe_allow_html=True)
 
@@ -328,9 +375,12 @@ def build_student_pdf(student_name: str, kademe: int, student_df: pd.DataFrame) 
 
 
 def build_top40_pdf(kademe: int, exam_name: str, top40_df: pd.DataFrame) -> BytesIO:
-    """Tek sayfa PDF (A4 yatay) + logo + PDF uyumlu madalya (ALTIN/GÜMÜŞ/BRONZ).
-
-    Not: Emoji (🥇🥈🥉) PDF'de çoğu sistemde görünmediği için metin kullanıyoruz.
+    """
+    TEK SAYFA PDF (A4 yatay):
+    - Logo + başlık
+    - Sıkı kolon genişlikleri / küçük font
+    - Zebra satır
+    Not: Emoji/madalya kullanılmaz (yazıcı/PDF font uyumluluğu için).
     """
     font_name = ensure_pdf_font()
     styles = getSampleStyleSheet()
@@ -374,28 +424,16 @@ def build_top40_pdf(kademe: int, exam_name: str, top40_df: pd.DataFrame) -> Byte
     if "Puan" in tdf.columns:
         tdf["Puan"] = tdf["Puan"].apply(lambda x: "" if pd.isna(x) else f"{float(x):.2f}")
 
-    # PDF'de emoji kare çıkar -> temizle
+    # Ad Soyad temizliği (ekranda emoji varsa PDF'de at)
     if "Ad Soyad" in tdf.columns:
         tdf["Ad Soyad"] = tdf["Ad Soyad"].astype(str)
         for bad in ["🥇", "🥈", "🥉", "🏅", "★"]:
             tdf["Ad Soyad"] = tdf["Ad Soyad"].str.replace(bad, "", regex=False)
         tdf["Ad Soyad"] = tdf["Ad Soyad"].str.strip()
 
-    # Madalya metni ekle (PDF uyumlu)
-    if "Sıra" in tdf.columns and "Ad Soyad" in tdf.columns:
-        def add_medal_text(row):
-            try:
-                r = int(row["Sıra"])
-            except Exception:
-                return str(row["Ad Soyad"])
-            medal = "ALTIN  " if r == 1 else "GÜMÜŞ  " if r == 2 else "BRONZ  " if r == 3 else ""
-            return medal + str(row["Ad Soyad"])
-        tdf["Ad Soyad"] = tdf.apply(add_medal_text, axis=1)
-
-    # Tablo verisi
     table_data = [list(tdf.columns)] + tdf.values.tolist()
 
-    # Kolon genişlikleri (tek sayfa için sıkı)
+    # Kolon genişlikleri (tek sayfa - sıkı)
     col_widths = []
     for col in tdf.columns:
         if col == "Sıra":
@@ -403,44 +441,44 @@ def build_top40_pdf(kademe: int, exam_name: str, top40_df: pd.DataFrame) -> Byte
         elif col == "Okul No":
             col_widths.append(58)
         elif col == "Ad Soyad":
-            col_widths.append(290)
+            col_widths.append(360)
         elif col == "Sınıf":
-            col_widths.append(50)
+            col_widths.append(55)
         elif col == "Puan":
-            col_widths.append(52)
+            col_widths.append(55)
         elif col == "Deneme Sayısı":
-            col_widths.append(60)
+            col_widths.append(55)
         elif col == "Denemeler":
-            col_widths.append(260)
+            col_widths.append(220)
         else:
             col_widths.append(60)
 
-    # Satır yükseklikleri sabit (tek sayfa için kritik)
+    # Satır yükseklikleri sabit (tek sayfa için)
     row_heights = [12] + [10] * (len(table_data) - 1)
 
     tbl = Table(table_data, colWidths=col_widths, rowHeights=row_heights, hAlign="CENTER")
 
     style_cmds = [
-        ("BACKGROUND", (0,0), (-1,0), colors.HexColor("#0F2D52")),
-        ("TEXTCOLOR", (0,0), (-1,0), colors.white),
-        ("FONTNAME", (0,0), (-1,-1), font_name or "Helvetica"),
-        ("FONTSIZE", (0,0), (-1,0), 7),
-        ("FONTSIZE", (0,1), (-1,-1), 6.2),
-        ("GRID", (0,0), (-1,-1), 0.25, colors.HexColor("#9aa7b2")),
-        ("ALIGN", (0,0), (-1,0), "CENTER"),
-        ("ALIGN", (0,1), (1,-1), "CENTER"),
-        ("ALIGN", (-1,1), (-1,-1), "CENTER"),
-        ("VALIGN", (0,0), (-1,-1), "MIDDLE"),
-        ("TOPPADDING", (0,0), (-1,-1), 0),
-        ("BOTTOMPADDING", (0,0), (-1,-1), 0),
-        ("LEFTPADDING", (0,0), (-1,-1), 2),
-        ("RIGHTPADDING", (0,0), (-1,-1), 2),
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#0F2D52")),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+        ("FONTNAME", (0, 0), (-1, -1), font_name or "Helvetica"),
+        ("FONTSIZE", (0, 0), (-1, 0), 7),       # başlık
+        ("FONTSIZE", (0, 1), (-1, -1), 6.2),    # içerik
+        ("GRID", (0, 0), (-1, -1), 0.25, colors.HexColor("#9aa7b2")),
+        ("ALIGN", (0, 0), (-1, 0), "CENTER"),
+        ("ALIGN", (0, 1), (1, -1), "CENTER"),
+        ("ALIGN", (-1, 1), (-1, -1), "CENTER"),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("TOPPADDING", (0, 0), (-1, -1), 0),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+        ("LEFTPADDING", (0, 0), (-1, -1), 2),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 2),
     ]
 
-    # zebra satır
+    # Zebra satır
     for r in range(1, len(table_data)):
         bg = colors.HexColor("#F3F6FB") if r % 2 == 0 else colors.white
-        style_cmds.append(("BACKGROUND", (0,r), (-1,r), bg))
+        style_cmds.append(("BACKGROUND", (0, r), (-1, r), bg))
 
     tbl.setStyle(TableStyle(style_cmds))
     elems.append(tbl)
@@ -448,6 +486,7 @@ def build_top40_pdf(kademe: int, exam_name: str, top40_df: pd.DataFrame) -> Byte
     doc.build(elems)
     buffer.seek(0)
     return buffer
+
 
 # --------------------
 # UI HEADER (logo)
@@ -566,13 +605,6 @@ with tab_dash:
 
         top40.insert(0, "Sıra", range(1, len(top40) + 1))
 
-        # Ekranda emoji (Streamlit) - PDF’de metin (ALTIN/GÜMÜŞ/BRONZ)
-        def name_with_medal(row):
-            r = int(row["Sıra"])
-            m = "🥇 " if r == 1 else "🥈 " if r == 2 else "🥉 " if r == 3 else ""
-            return m + str(row.get("ad_soyad", "")).strip()
-
-        top40["Ad Soyad"] = top40.apply(name_with_medal, axis=1)
 
         # Ekranda gösterilecek tablo
         cols = ["Sıra", "ogr_no", "Ad Soyad", "sinif", "lgs_puan"]
