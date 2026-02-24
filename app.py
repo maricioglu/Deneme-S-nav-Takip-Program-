@@ -328,11 +328,9 @@ def build_student_pdf(student_name: str, kademe: int, student_df: pd.DataFrame) 
 
 
 def build_top40_pdf(kademe: int, exam_name: str, top40_df: pd.DataFrame) -> BytesIO:
-    """
-    TEK SAYFA PDF:
-    - A4 yatay
-    - satır yükseklikleri sabit (tek sayfaya sığar)
-    - emoji yerine ALTIN/GÜMÜŞ/BRONZ yazısı (garanti görünür)
+    """Tek sayfa PDF (A4 yatay) + logo + PDF uyumlu madalya (ALTIN/GÜMÜŞ/BRONZ).
+
+    Not: Emoji (🥇🥈🥉) PDF'de çoğu sistemde görünmediği için metin kullanıyoruz.
     """
     font_name = ensure_pdf_font()
     styles = getSampleStyleSheet()
@@ -383,7 +381,7 @@ def build_top40_pdf(kademe: int, exam_name: str, top40_df: pd.DataFrame) -> Byte
             tdf["Ad Soyad"] = tdf["Ad Soyad"].str.replace(bad, "", regex=False)
         tdf["Ad Soyad"] = tdf["Ad Soyad"].str.strip()
 
-    # Madalya yazısı ekle (PDF uyumlu)
+    # Madalya metni ekle (PDF uyumlu)
     if "Sıra" in tdf.columns and "Ad Soyad" in tdf.columns:
         def add_medal_text(row):
             try:
@@ -397,26 +395,27 @@ def build_top40_pdf(kademe: int, exam_name: str, top40_df: pd.DataFrame) -> Byte
     # Tablo verisi
     table_data = [list(tdf.columns)] + tdf.values.tolist()
 
-    # Kolon genişlikleri (tek sayfa - biraz daha sıkı)
+    # Kolon genişlikleri (tek sayfa için sıkı)
     col_widths = []
     for col in tdf.columns:
         if col == "Sıra":
-            col_widths.append(28)
+            col_widths.append(26)
         elif col == "Okul No":
-            col_widths.append(60)
+            col_widths.append(58)
         elif col == "Ad Soyad":
-            col_widths.append(310)
+            col_widths.append(290)
         elif col == "Sınıf":
-            col_widths.append(55)
+            col_widths.append(50)
         elif col == "Puan":
-            col_widths.append(55)
+            col_widths.append(52)
         elif col == "Deneme Sayısı":
-            col_widths.append(70)
+            col_widths.append(60)
+        elif col == "Denemeler":
+            col_widths.append(260)
         else:
             col_widths.append(60)
 
-    # Satır yüksekliklerini sabitle (TEK SAYFA için kritik)
-    # Header 12, içerik 10
+    # Satır yükseklikleri sabit (tek sayfa için kritik)
     row_heights = [12] + [10] * (len(table_data) - 1)
 
     tbl = Table(table_data, colWidths=col_widths, rowHeights=row_heights, hAlign="CENTER")
@@ -425,8 +424,8 @@ def build_top40_pdf(kademe: int, exam_name: str, top40_df: pd.DataFrame) -> Byte
         ("BACKGROUND", (0,0), (-1,0), colors.HexColor("#0F2D52")),
         ("TEXTCOLOR", (0,0), (-1,0), colors.white),
         ("FONTNAME", (0,0), (-1,-1), font_name or "Helvetica"),
-        ("FONTSIZE", (0,0), (-1,0), 7),     # başlık
-        ("FONTSIZE", (0,1), (-1,-1), 6),    # içerik (daha küçük = tek sayfa)
+        ("FONTSIZE", (0,0), (-1,0), 7),
+        ("FONTSIZE", (0,1), (-1,-1), 6.2),
         ("GRID", (0,0), (-1,-1), 0.25, colors.HexColor("#9aa7b2")),
         ("ALIGN", (0,0), (-1,0), "CENTER"),
         ("ALIGN", (0,1), (1,-1), "CENTER"),
@@ -529,19 +528,32 @@ with tab_dash:
 
     t1, t2 = st.tabs(["🏅 İlk 40", "🧑‍🎓 Öğrenci"])
 
-    with t1:
+        with t1:
         if sec_exam == ALL_LABEL:
-            # TÜM denemeler: öğrenci bazında ortalama
-            top40 = (
+            # TÜM denemeler: öğrenci bazında ortalama + deneme sayısı + deneme listesi
+            g = (
                 df_f.dropna(subset=["lgs_puan"])
                    .groupby(["ogr_no", "ad_soyad", "sinif"], as_index=False)
                    .agg(
                        lgs_puan=("lgs_puan", "mean"),
-                       deneme_sayisi=("exam_name", "nunique")
+                       deneme_sayisi=("exam_name", "nunique"),
+                       denemeler=("exam_name", lambda s: ", ".join(sorted(set([x for x in s.dropna().astype(str)]))))
                    )
-                   .sort_values(["lgs_puan", "deneme_sayisi"], ascending=[False, False])
-                   .head(40)
-                   .reset_index(drop=True)
+            )
+
+            # TEK SAYFA PDF için: deneme isimlerini kısalt (ilk 3 + “+N”)
+            def short_exam_list(full: str, max_items: int = 3) -> str:
+                items = [x.strip() for x in str(full).split(",") if x.strip()]
+                if len(items) <= max_items:
+                    return ", ".join(items)
+                return ", ".join(items[:max_items]) + f" +{len(items) - max_items}"
+
+            g["denemeler_kisa"] = g["denemeler"].apply(short_exam_list)
+
+            top40 = (
+                g.sort_values(["lgs_puan", "deneme_sayisi"], ascending=[False, False])
+                 .head(40)
+                 .reset_index(drop=True)
             )
         else:
             # TEK deneme: mevcut mantık
@@ -551,9 +563,10 @@ with tab_dash:
                    .head(40)
                    .reset_index(drop=True)
             )
+
         top40.insert(0, "Sıra", range(1, len(top40) + 1))
 
-        # ekranda emoji (Streamlit), PDF’de ★ kullanacağız
+        # Ekranda emoji (Streamlit) - PDF’de metin (ALTIN/GÜMÜŞ/BRONZ)
         def name_with_medal(row):
             r = int(row["Sıra"])
             m = "🥇 " if r == 1 else "🥈 " if r == 2 else "🥉 " if r == 3 else ""
@@ -561,24 +574,34 @@ with tab_dash:
 
         top40["Ad Soyad"] = top40.apply(name_with_medal, axis=1)
 
-        show = top40[["Sıra", "ogr_no", "Ad Soyad", "sinif", "lgs_puan"]].copy()
+        # Ekranda gösterilecek tablo
+        cols = ["Sıra", "ogr_no", "Ad Soyad", "sinif", "lgs_puan"]
+        show = top40[cols].copy()
         show.columns = ["Sıra", "Okul No", "Ad Soyad", "Sınıf", "Puan"]
         show["Puan"] = pd.to_numeric(show["Puan"], errors="coerce").round(2)
 
-        if sec_exam == ALL_LABEL and "deneme_sayisi" in top40.columns:
+        if sec_exam == ALL_LABEL:
             show["Deneme Sayısı"] = top40["deneme_sayisi"].values
+            # Ekranda tam listeyi göster
+            show["Denemeler"] = top40["denemeler"].values
 
         st.dataframe(show, use_container_width=True, hide_index=True)
 
+        # PDF için: denemeler kısa olsun (tek sayfayı korur)
+        pdf_df = show.copy()
+        if "Denemeler" in pdf_df.columns and sec_exam == ALL_LABEL:
+            pdf_df["Denemeler"] = top40["denemeler_kisa"].values
+
         pdf_exam_name = sec_exam if sec_exam != ALL_LABEL else "TÜM DENEMELER ORTALAMASI"
-        top40_pdf = build_top40_pdf(sec_kademe, pdf_exam_name, show)
+        top40_pdf = build_top40_pdf(sec_kademe, pdf_exam_name, pdf_df)
+
         st.download_button(
             "📄 İlk 40 PDF (Tek Sayfa)",
             data=top40_pdf,
             file_name=f"ilk40_{sec_kademe}_{pdf_exam_name}.pdf",
             mime="application/pdf"
         )
-    with t2:
+with t2:
         ogr_list = sorted([s for s in df_f["ad_soyad"].dropna().unique()])
         sec_ogr = st.selectbox("Öğrenci seç", ["(Seçme)"] + ogr_list)
 
