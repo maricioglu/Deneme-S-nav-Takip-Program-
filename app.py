@@ -607,17 +607,52 @@ with tab_dash:
 
 
         # Ekranda gösterilecek tablo
-        cols = ["Sıra", "ogr_no", "Ad Soyad", "sinif", "lgs_puan"]
-        show = top40[cols].copy()
-        show.columns = ["Sıra", "Okul No", "Ad Soyad", "Sınıf", "Puan"]
-        show["Puan"] = pd.to_numeric(show["Puan"], errors="coerce").round(2)
+        # --- Top40 tabloyu güvenli şekilde oluştur (kolon adı farklarını tolere eder) ---
 
-        if sec_exam == ALL_LABEL:
-            show["Deneme Sayısı"] = top40["deneme_sayisi"].values
-            # Ekranda tam listeyi göster
-            show["Denemeler"] = top40["denemeler"].values
+# top40 içinde hangi isimler var kontrol edip tek bir standarda çekiyoruz
+t = top40.copy()
 
-        st.dataframe(show, use_container_width=True, hide_index=True)
+# bazı yerlerde kolon adları farklı olabiliyor -> normalize
+rename_map = {}
+if "ogr_no" in t.columns: rename_map["ogr_no"] = "Okul No"
+if "okul_no" in t.columns: rename_map["okul_no"] = "Okul No"
+
+if "ad_soyad" in t.columns: rename_map["ad_soyad"] = "Ad Soyad"
+if "Ad Soyad" in t.columns: rename_map["Ad Soyad"] = "Ad Soyad"
+
+if "sinif" in t.columns: rename_map["sinif"] = "Sınıf"
+if "Sınıf" in t.columns: rename_map["Sınıf"] = "Sınıf"
+
+if "lgs_puan" in t.columns: rename_map["lgs_puan"] = "Puan"
+if "Puan" in t.columns: rename_map["Puan"] = "Puan"
+
+# deneme sayısı / deneme listesi kolonları
+if "deneme_sayisi" in t.columns: rename_map["deneme_sayisi"] = "Deneme Sayısı"
+if "Deneme Sayısı" in t.columns: rename_map["Deneme Sayısı"] = "Deneme Sayısı"
+
+if "denemeler_kisa" in t.columns: rename_map["denemeler_kisa"] = "Denemeler"
+if "Denemeler" in t.columns: rename_map["Denemeler"] = "Denemeler"
+
+t = t.rename(columns=rename_map)
+
+# Sıra kolonu yoksa üret
+if "Sıra" not in t.columns:
+    t = t.reset_index(drop=True)
+    t.insert(0, "Sıra", range(1, len(t) + 1))
+
+# gösterilecek kolonlar: olanları al
+wanted = ["Sıra", "Okul No", "Ad Soyad", "Sınıf", "Puan"]
+if sec_exam == ALL_LABEL:  # tüm denemeler ortalama modunda ek kolonlar
+    wanted += ["Deneme Sayısı", "Denemeler"]
+
+cols_available = [c for c in wanted if c in t.columns]
+show = t[cols_available].copy()
+
+# puanı yuvarla (varsa)
+if "Puan" in show.columns:
+    show["Puan"] = pd.to_numeric(show["Puan"], errors="coerce").round(2)
+
+st.dataframe(show, use_container_width=True, hide_index=True)
 
         # PDF için: denemeler kısa olsun (tek sayfayı korur)
         pdf_df = show.copy()
