@@ -561,6 +561,7 @@ with tab_dash:
 
         pdf_exam_name = sec_exam if sec_exam != ALL_LABEL else "TÜM DENEMELER ORTALAMASI"
         top40_pdf = build_top40_pdf(sec_kademe, pdf_exam_name, show)
+        st.download_button(
             "📄 İlk 40 PDF (Tek Sayfa)",
             data=top40_pdf,
             file_name=f"ilk40_{sec_kademe}_{pdf_exam_name}.pdf",
