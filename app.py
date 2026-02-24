@@ -567,7 +567,7 @@ with tab_dash:
 
     t1, t2 = st.tabs(["🏅 İlk 40", "🧑‍🎓 Öğrenci"])
 
-        with t1:
+    with t1:
         if sec_exam == ALL_LABEL:
             # TÜM denemeler: öğrenci bazında ortalama + deneme sayısı + deneme listesi
             g = (
@@ -633,7 +633,7 @@ with tab_dash:
             file_name=f"ilk40_{sec_kademe}_{pdf_exam_name}.pdf",
             mime="application/pdf"
         )
-with t2:
+    with t2:
         ogr_list = sorted([s for s in df_f["ad_soyad"].dropna().unique()])
         sec_ogr = st.selectbox("Öğrenci seç", ["(Seçme)"] + ogr_list)
 
