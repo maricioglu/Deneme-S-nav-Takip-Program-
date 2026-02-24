@@ -569,14 +569,40 @@ with tab_dash:
 
     with t1:
         if sec_exam == ALL_LABEL:
-            # TÜM denemeler: öğrenci bazında ortalama + deneme sayısı + deneme listesi
+            # TÜM denemeler: aynı öğrenciyi (ogr_no) üzerinden birleştir.
+            # İsim farklı yazılsa bile tek öğrenci say.
+            tmp = df_f.dropna(subset=["lgs_puan"]).copy()
+
+            # Okul no yoksa (nadiren) ad+sinif ile anahtar üret (fallback)
+            tmp["ogr_no_str"] = tmp["ogr_no"].astype(str).str.strip()
+            tmp["ad_norm"] = (
+                tmp["ad_soyad"].astype(str)
+                   .str.strip()
+                   .str.replace(r"\s+", " ", regex=True)
+                   .str.upper()
+            )
+            tmp["sinif_str"] = tmp["sinif"].astype(str).str.strip()
+
+            # anahtar: okul no varsa onu kullan, yoksa ad+sinif
+            tmp["ogr_key"] = tmp["ogr_no_str"].where(tmp["ogr_no_str"].ne("") & tmp["ogr_no_str"].ne("nan"),
+                                                     tmp["ad_norm"] + " | " + tmp["sinif_str"])
+
+            def mode_or_last(s):
+                s = s.dropna().astype(str)
+                if s.empty:
+                    return ""
+                vc = s.value_counts()
+                return vc.index[0] if len(vc) else s.iloc[-1]
+
             g = (
-                df_f.dropna(subset=["lgs_puan"])
-                   .groupby(["ogr_no", "ad_soyad", "sinif"], as_index=False)
+                tmp.groupby(["ogr_key"], as_index=False)
                    .agg(
+                       ogr_no=("ogr_no", mode_or_last),
+                       ad_soyad=("ad_norm", mode_or_last),
+                       sinif=("sinif", mode_or_last),
                        lgs_puan=("lgs_puan", "mean"),
                        deneme_sayisi=("exam_name", "nunique"),
-                       denemeler=("exam_name", lambda s: ", ".join(sorted(set([x for x in s.dropna().astype(str)]))))
+                       denemeler=("exam_name", lambda s: ", ".join(sorted(set(s.dropna().astype(str)))))
                    )
             )
 
