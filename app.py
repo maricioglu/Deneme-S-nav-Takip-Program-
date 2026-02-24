@@ -483,13 +483,22 @@ with tab_dash:
     with colA:
         sec_kademe = st.selectbox("Kademe", kademeler)
 
+    # --- Deneme seçimi (Tüm denemeler ortalaması opsiyonlu) ---
+    ALL_LABEL = "📌 TÜM DENEMELER (ORTALAMA)"
+
     kdf = all_df[all_df["kademe"] == sec_kademe].copy()
     exams = get_exam_order(kdf) or sorted([e for e in kdf["exam_name"].dropna().unique()])
+    exam_options = [ALL_LABEL] + list(exams)
 
     with colB:
-        sec_exam = st.selectbox("Deneme", exams)
+        sec_exam = st.selectbox("Deneme", exam_options)
 
-    df_exam = kdf[kdf["exam_name"] == sec_exam].copy()
+    # Seçime göre veri
+    if sec_exam == ALL_LABEL:
+        df_exam = kdf.copy()
+    else:
+        df_exam = kdf[kdf["exam_name"] == sec_exam].copy()
+
     siniflar = sorted([s for s in df_exam["sinif"].dropna().unique()])
 
     with colC:
@@ -510,12 +519,27 @@ with tab_dash:
     t1, t2 = st.tabs(["🏅 İlk 40", "🧑‍🎓 Öğrenci"])
 
     with t1:
-        top40 = (
-            df_f.dropna(subset=["lgs_puan"])
-               .sort_values("lgs_puan", ascending=False)
-               .head(40)
-               .reset_index(drop=True)
-        )
+        if sec_exam == ALL_LABEL:
+            # TÜM denemeler: öğrenci bazında ortalama
+            top40 = (
+                df_f.dropna(subset=["lgs_puan"])
+                   .groupby(["ogr_no", "ad_soyad", "sinif"], as_index=False)
+                   .agg(
+                       lgs_puan=("lgs_puan", "mean"),
+                       deneme_sayisi=("exam_name", "nunique")
+                   )
+                   .sort_values(["lgs_puan", "deneme_sayisi"], ascending=[False, False])
+                   .head(40)
+                   .reset_index(drop=True)
+            )
+        else:
+            # TEK deneme: mevcut mantık
+            top40 = (
+                df_f.dropna(subset=["lgs_puan"])
+                   .sort_values("lgs_puan", ascending=False)
+                   .head(40)
+                   .reset_index(drop=True)
+            )
         top40.insert(0, "Sıra", range(1, len(top40) + 1))
 
         # ekranda emoji (Streamlit), PDF’de ★ kullanacağız
@@ -530,16 +554,18 @@ with tab_dash:
         show.columns = ["Sıra", "Okul No", "Ad Soyad", "Sınıf", "Puan"]
         show["Puan"] = pd.to_numeric(show["Puan"], errors="coerce").round(2)
 
+        if sec_exam == ALL_LABEL and "deneme_sayisi" in top40.columns:
+            show["Deneme Sayısı"] = top40["deneme_sayisi"].values
+
         st.dataframe(show, use_container_width=True, hide_index=True)
 
-        top40_pdf = build_top40_pdf(sec_kademe, sec_exam, show)
-        st.download_button(
+        pdf_exam_name = sec_exam if sec_exam != ALL_LABEL else "TÜM DENEMELER ORTALAMASI"
+        top40_pdf = build_top40_pdf(sec_kademe, pdf_exam_name, show)
             "📄 İlk 40 PDF (Tek Sayfa)",
             data=top40_pdf,
-            file_name=f"ilk40_{sec_kademe}_{sec_exam}.pdf",
+            file_name=f"ilk40_{sec_kademe}_{pdf_exam_name}.pdf",
             mime="application/pdf"
         )
-
     with t2:
         ogr_list = sorted([s for s in df_f["ad_soyad"].dropna().unique()])
         sec_ogr = st.selectbox("Öğrenci seç", ["(Seçme)"] + ogr_list)
