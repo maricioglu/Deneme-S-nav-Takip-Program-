@@ -88,12 +88,6 @@ st.markdown("""
 }
 /* Dataframe nicer */
 [data-testid="stDataFrame"] {border-radius: 14px; overflow:hidden; border: 1px solid rgba(255,255,255,0.10);}
-
-/* Dataframe cells vertically centered */
-div[data-testid="stDataFrame"] table td, 
-div[data-testid="stDataFrame"] table th {
-  vertical-align: middle !important;
-}
 </style>
 """, unsafe_allow_html=True)
 
@@ -416,7 +410,7 @@ def build_top40_pdf(kademe: int, exam_name: str, top40_df: pd.DataFrame) -> Byte
         h.setStyle(TableStyle([
             ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
             ("LEFTPADDING", (0, 0), (-1, -1), 0),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 1),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
         ]))
         elems.append(h)
     else:
@@ -447,7 +441,7 @@ def build_top40_pdf(kademe: int, exam_name: str, top40_df: pd.DataFrame) -> Byte
         elif col == "Okul No":
             col_widths.append(58)
         elif col == "Ad Soyad":
-            col_widths.append(360)
+            col_widths.append(300)
         elif col == "Sınıf":
             col_widths.append(55)
         elif col == "Puan":
@@ -455,7 +449,7 @@ def build_top40_pdf(kademe: int, exam_name: str, top40_df: pd.DataFrame) -> Byte
         elif col == "Deneme Sayısı":
             col_widths.append(55)
         elif col == "Denemeler":
-            col_widths.append(220)
+            col_widths.append(280)
         else:
             col_widths.append(60)
 
@@ -470,6 +464,8 @@ def build_top40_pdf(kademe: int, exam_name: str, top40_df: pd.DataFrame) -> Byte
         ("FONTNAME", (0, 0), (-1, -1), font_name or "Helvetica"),
         ("FONTSIZE", (0, 0), (-1, 0), 7),       # başlık
         ("FONTSIZE", (0, 1), (-1, -1), 6.2),    # içerik
+        ("LEADING", (0, 0), (-1, 0), 9),
+        ("LEADING", (0, 1), (-1, -1), 7.4),
         ("GRID", (0, 0), (-1, -1), 0.25, colors.HexColor("#9aa7b2")),
         ("ALIGN", (0, 0), (-1, 0), "CENTER"),
         ("ALIGN", (0, 1), (1, -1), "CENTER"),
