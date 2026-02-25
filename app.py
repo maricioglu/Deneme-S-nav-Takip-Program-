@@ -435,21 +435,38 @@ def build_top40_pdf(kademe: int, exam_name: str, top40_df: pd.DataFrame) -> Byte
 
     # Kolon genişlikleri (tek sayfa - sıkı)
     col_widths = []
+
+    # Dinamik deneme sütunları (1. Sınav Puanı, 2. Sınav Puanı, ...)
+    exam_cols = [c for c in tdf.columns if re.match(r"^\d+\. Sınav Puanı$", str(c))]
+    exam_cols = sorted(exam_cols, key=lambda x: int(str(x).split(".")[0]))
+
+    # Sayfaya sığdırmak için kalan genişliği deneme sütunlarına paylaştır
+    page_w = landscape(A4)[0]  # ~842
+    usable_w = page_w - 16  # left+right margin (8+8)
+    fixed_widths = {
+        "Sıra": 24,
+        "Okul No": 55,
+        "Ad Soyad": 250,
+        "Sınıf": 45,
+        "Deneme Sayısı": 55,
+        "Puan": 55,
+        "Ortalama": 60,
+    }
+
+    fixed_sum = 0
     for col in tdf.columns:
-        if col == "Sıra":
-            col_widths.append(26)
-        elif col == "Okul No":
-            col_widths.append(58)
-        elif col == "Ad Soyad":
-            col_widths.append(300)
-        elif col == "Sınıf":
-            col_widths.append(55)
-        elif col == "Puan":
-            col_widths.append(55)
-        elif col == "Deneme Sayısı":
-            col_widths.append(55)
-        elif col == "Denemeler":
-            col_widths.append(280)
+        if col in fixed_widths and col not in exam_cols:
+            fixed_sum += fixed_widths[col]
+
+    remaining = max(200, int(usable_w - fixed_sum))
+    exam_w = int(remaining / max(1, len(exam_cols)))
+    exam_w = max(32, min(55, exam_w))  # çok dar olmasın
+
+    for col in tdf.columns:
+        if col in fixed_widths and col not in exam_cols:
+            col_widths.append(fixed_widths[col])
+        elif str(col) in exam_cols:
+            col_widths.append(exam_w)
         else:
             col_widths.append(60)
 
@@ -571,7 +588,7 @@ with tab_dash:
 
     with t1:
         if sec_exam == ALL_LABEL:
-            # TÜM denemeler: aynı öğrenciyi (ogr_no) üzerinden birleştir.
+                        # TÜM denemeler: aynı öğrenciyi (ogr_no) üzerinden birleştir.
             # İsim farklı yazılsa bile tek öğrenci say.
             tmp = df_f.dropna(subset=["lgs_puan"]).copy()
 
@@ -579,15 +596,17 @@ with tab_dash:
             tmp["ogr_no_str"] = tmp["ogr_no"].astype(str).str.strip()
             tmp["ad_norm"] = (
                 tmp["ad_soyad"].astype(str)
-                   .str.strip()
-                   .str.replace(r"\s+", " ", regex=True)
-                   .str.upper()
-            )
+            .str.strip()
+            .str.replace(r"\s+", " ", regex=True)
+            .str.upper()
+        )
             tmp["sinif_str"] = tmp["sinif"].astype(str).str.strip()
 
             # anahtar: okul no varsa onu kullan, yoksa ad+sinif
-            tmp["ogr_key"] = tmp["ogr_no_str"].where(tmp["ogr_no_str"].ne("") & tmp["ogr_no_str"].ne("nan"),
-                                                     tmp["ad_norm"] + " | " + tmp["sinif_str"])
+            tmp["ogr_key"] = tmp["ogr_no_str"].where(
+                tmp["ogr_no_str"].ne("") & tmp["ogr_no_str"].ne("nan"),
+                tmp["ad_norm"] + " | " + tmp["sinif_str"]
+        )
 
             def mode_or_last(s):
                 s = s.dropna().astype(str)
@@ -596,40 +615,48 @@ with tab_dash:
                 vc = s.value_counts()
                 return vc.index[0] if len(vc) else s.iloc[-1]
 
-            g = (
+            # Deneme sırası (1., 2., 3. ...)
+            exam_order = get_exam_order(kdf) or sorted([e for e in tmp["exam_name"].dropna().unique()])
+            exam_idx_map = {name: i+1 for i, name in enumerate(exam_order)}
+            tmp["exam_idx"] = tmp["exam_name"].map(exam_idx_map)
+
+            base = (
                 tmp.groupby(["ogr_key"], as_index=False)
-                   .agg(
+            .agg(
                        ogr_no=("ogr_no", mode_or_last),
                        ad_soyad=("ad_norm", mode_or_last),
                        sinif=("sinif", mode_or_last),
-                       lgs_puan=("lgs_puan", "mean"),
-                       deneme_sayisi=("exam_name", "nunique"),
-                       denemeler=("exam_name", lambda s: ", ".join(sorted(set(s.dropna().astype(str)))))
+                       Ortalama=("lgs_puan", "mean"),
+                       Deneme_Sayisi=("exam_name", "nunique"),
                    )
-            )
+        )
 
-            # TEK SAYFA PDF için: deneme isimlerini kısalt (ilk 3 + “+N”)
-            def short_exam_list(full: str, max_items: int = 3) -> str:
-                items = [x.strip() for x in str(full).split(",") if x.strip()]
-                if len(items) <= max_items:
-                    return ", ".join(items)
-                return ", ".join(items[:max_items]) + f" +{len(items) - max_items}"
+            # Her denemenin puanını ayrı sütun yap
+            pivot = (
+                tmp.pivot_table(index="ogr_key", columns="exam_idx", values="lgs_puan", aggfunc="mean")
+            .reset_index()
+        )
 
-            g["denemeler_kisa"] = g["denemeler"].apply(short_exam_list)
+            # Sütun adları: 1. Sınav Puanı, 2. Sınav Puanı ...
+            rename_cols = {c: f"{int(c)}. Sınav Puanı" for c in pivot.columns if isinstance(c, (int, float)) or str(c).isdigit()}
+            pivot = pivot.rename(columns=rename_cols)
 
+            g = base.merge(pivot, on="ogr_key", how="left")
+
+            # Sıralama: Ortalamaya göre
             top40 = (
-                g.sort_values(["lgs_puan", "deneme_sayisi"], ascending=[False, False])
+                g.sort_values(["Ortalama", "Deneme_Sayisi"], ascending=[False, False])
                  .head(40)
                  .reset_index(drop=True)
-            )
+        )
         else:
             # TEK deneme: mevcut mantık
             top40 = (
-                df_f.dropna(subset=["lgs_puan"])
-                   .sort_values("lgs_puan", ascending=False)
-                   .head(40)
-                   .reset_index(drop=True)
-            )
+            df_f.dropna(subset=["lgs_puan"])
+            .sort_values("lgs_puan", ascending=False)
+            .head(40)
+            .reset_index(drop=True)
+        )
 
         top40.insert(0, "Sıra", range(1, len(top40) + 1))
 
@@ -648,23 +675,34 @@ with tab_dash:
         if "lgs_puan" in t.columns: rename_map["lgs_puan"] = "Puan"
         if "Puan" in t.columns: rename_map["Puan"] = "Puan"
         if "deneme_sayisi" in t.columns: rename_map["deneme_sayisi"] = "Deneme Sayısı"
+        if "Deneme_Sayisi" in t.columns: rename_map["Deneme_Sayisi"] = "Deneme Sayısı"
         if "Deneme Sayısı" in t.columns: rename_map["Deneme Sayısı"] = "Deneme Sayısı"
-        if "denemeler" in t.columns: rename_map["denemeler"] = "Denemeler"
+        if "Ortalama" in t.columns: rename_map["Ortalama"] = "Ortalama"
         if "Denemeler" in t.columns: rename_map["Denemeler"] = "Denemeler"
         if "denemeler_kisa" in t.columns: rename_map["denemeler_kisa"] = "Denemeler (Kısa)"
         if "Denemeler (Kısa)" in t.columns: rename_map["Denemeler (Kısa)"] = "Denemeler (Kısa)"
         t = t.rename(columns=rename_map)
 
         # Gösterim: ekranda tam liste, PDF'de kısa liste kullanacağız
-        wanted = ["Sıra", "Okul No", "Ad Soyad", "Sınıf", "Puan"]
+                # Gösterilecek kolonlar
         if sec_exam == ALL_LABEL:
+            # Genel ortalama modu: her deneme puanı + ortalama
+            exam_cols = [c for c in t.columns if re.match(r"^\\d+\\. Sınav Puanı$", c)]
+            exam_cols = sorted(exam_cols, key=lambda x: int(x.split(".")[0]))
+            wanted = ["Sıra", "Okul No", "Ad Soyad", "Sınıf"]
             if "Deneme Sayısı" in t.columns: wanted.append("Deneme Sayısı")
-            if "Denemeler" in t.columns: wanted.append("Denemeler")
+            wanted += exam_cols
+            if "Ortalama" in t.columns: wanted.append("Ortalama")
+        else:
+            wanted = ["Sıra", "Okul No", "Ad Soyad", "Sınıf", "Puan"]
+
         cols_available = [c for c in wanted if c in t.columns]
         show = t[cols_available].copy()
 
-        if "Puan" in show.columns:
-            show["Puan"] = pd.to_numeric(show["Puan"], errors="coerce").round(2)
+                # Sayısal kolonları yuvarla
+        for c in show.columns:
+            if c in ("Puan", "Ortalama") or re.match(r"^\d+\. Sınav Puanı$", str(c)):
+                show[c] = pd.to_numeric(show[c], errors="coerce").round(2)
 
         st.dataframe(show, use_container_width=True, hide_index=True)
 
@@ -711,4 +749,4 @@ with tab_dash:
                 data=pdf_buf,
                 file_name=f"{sec_ogr}_rapor.pdf",
                 mime="application/pdf"
-            )
+        )
