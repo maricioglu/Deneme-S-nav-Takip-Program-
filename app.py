@@ -398,23 +398,30 @@ def build_top40_pdf(kademe: int, exam_name: str, top40_df: pd.DataFrame) -> Byte
     elems = []
 
     # Header (logo + başlık)
+    title_html = (
+        f"<para align='center'><b>Cemil Meriç Ortaokulu</b><br/>"
+        f"İlk 40 Başarı Listesi — <b>{kademe}. Sınıf</b><br/>"
+        f"Deneme: <b>{exam_name}</b></para>"
+    )
+    title = Paragraph(title_html, styles["Normal"])
+
     if os.path.exists(LOGO_PATH):
-        logo = RLImage(LOGO_PATH, width=45, height=45)
-        title = Paragraph(
-            f"<b>Cemil Meriç Ortaokulu</b><br/>"
-            f"İlk 40 Başarı Listesi — <b>{kademe}. Sınıf</b><br/>"
-            f"Deneme: <b>{exam_name}</b>",
-            styles["Normal"]
-        )
-        h = Table([[logo, title]], colWidths=[55, 745])
+        # Logo biraz daha büyük
+        logo = RLImage(LOGO_PATH, width=60, height=60)
+
+        # 3 kolon: [logo][başlık(ortada)][boşluk] -> başlığı gerçek ortalamak için
+        h = Table([[logo, title, ""]], colWidths=[70, 690, 70])
         h.setStyle(TableStyle([
             ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("ALIGN", (1, 0), (1, 0), "CENTER"),
             ("LEFTPADDING", (0, 0), (-1, -1), 0),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+            ("TOPPADDING", (0, 0), (-1, -1), 0),
             ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
         ]))
         elems.append(h)
     else:
-        elems.append(Paragraph(f"İlk 40 — {kademe}. Sınıf — {exam_name}", styles["Title"]))
+        elems.append(Paragraph(f"<para align='center'><b>İlk 40</b> — {kademe}. Sınıf — {exam_name}</para>", styles["Title"]))
 
     elems.append(Spacer(1, 4))
 
@@ -442,8 +449,7 @@ def build_top40_pdf(kademe: int, exam_name: str, top40_df: pd.DataFrame) -> Byte
         "Okul No": 48,
         "Ad Soyad": 160,   # daha dar
         "Sınıf": 40,
-        "Deneme Sayısı": 45,
-        "Ortalama": 50,
+                "Ortalama": 50,
         "Puan": 55,
     }
 
@@ -660,15 +666,14 @@ with tab_dash:
             )
             top40.insert(0, "Sıra", range(1, len(top40) + 1))
 
-            show_cols = ["Sıra", "ogr_no", "ad_soyad", "sinif", "deneme_sayisi"] + exam_cols + ["Ortalama"]
+            show_cols = ["Sıra", "ogr_no", "ad_soyad", "sinif"] + exam_cols + ["Ortalama"]
             show = top40[show_cols].copy()
 
             show = show.rename(columns={
                 "ogr_no": "Okul No",
                 "ad_soyad": "Ad Soyad",
                 "sinif": "Sınıf",
-                "deneme_sayisi": "Deneme Sayısı",
-            })
+                            })
 
             for c in exam_cols + ["Ortalama"]:
                 if c in show.columns:
