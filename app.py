@@ -88,6 +88,12 @@ st.markdown("""
 }
 /* Dataframe nicer */
 [data-testid="stDataFrame"] {border-radius: 14px; overflow:hidden; border: 1px solid rgba(255,255,255,0.10);}
+
+/* Dataframe cells vertically centered */
+div[data-testid="stDataFrame"] table td, 
+div[data-testid="stDataFrame"] table th {
+  vertical-align: middle !important;
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -410,7 +416,7 @@ def build_top40_pdf(kademe: int, exam_name: str, top40_df: pd.DataFrame) -> Byte
         h.setStyle(TableStyle([
             ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
             ("LEFTPADDING", (0, 0), (-1, -1), 0),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 1),
         ]))
         elems.append(h)
     else:
@@ -454,7 +460,7 @@ def build_top40_pdf(kademe: int, exam_name: str, top40_df: pd.DataFrame) -> Byte
             col_widths.append(60)
 
     # Satır yükseklikleri sabit (tek sayfa için)
-    row_heights = [12] + [10] * (len(table_data) - 1)
+    row_heights = [14] + [12] * (len(table_data) - 1)
 
     tbl = Table(table_data, colWidths=col_widths, rowHeights=row_heights, hAlign="CENTER")
 
@@ -469,8 +475,8 @@ def build_top40_pdf(kademe: int, exam_name: str, top40_df: pd.DataFrame) -> Byte
         ("ALIGN", (0, 1), (1, -1), "CENTER"),
         ("ALIGN", (-1, 1), (-1, -1), "CENTER"),
         ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-        ("TOPPADDING", (0, 0), (-1, -1), 0),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+        ("TOPPADDING", (0, 0), (-1, -1), 1),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 1),
         ("LEFTPADDING", (0, 0), (-1, -1), 2),
         ("RIGHTPADDING", (0, 0), (-1, -1), 2),
     ]
