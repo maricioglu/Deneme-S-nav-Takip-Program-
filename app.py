@@ -396,24 +396,25 @@ def build_top40_pdf(kademe: int, exam_name: str, top40_df: pd.DataFrame) -> Byte
     )
 
     elems = []
-
-    # Header (logo + başlık)
+    # Header (logo solda, başlık sağda)
     title_html = (
-        f"<para align='center'><b>Cemil Meriç Ortaokulu</b><br/>"
-        f"İlk 40 Başarı Listesi — <b>{kademe}. Sınıf</b><br/>"
-        f"Deneme: <b>{exam_name}</b></para>"
+        "<para align='left'>"
+        "<b>DENEME SINAVLARI</b><br/>"
+        "<b>İLK 40 SONUÇ LİSTESİ</b><br/>"
+        f"<font size='8'>{kademe}. SINIF • {exam_name}</font>"
+        "</para>"
     )
     title = Paragraph(title_html, styles["Normal"])
 
     if os.path.exists(LOGO_PATH):
-        # Logo biraz daha büyük
-        logo = RLImage(LOGO_PATH, width=60, height=60)
+        # Logo daha büyük
+        logo = RLImage(LOGO_PATH, width=75, height=75)
 
-        # 3 kolon: [logo][başlık(ortada)][boşluk] -> başlığı gerçek ortalamak için
-        h = Table([[logo, title, ""]], colWidths=[70, 690, 70])
+        # 2 kolon: [logo][başlık]
+        h = Table([[logo, title]], colWidths=[85, 745])
         h.setStyle(TableStyle([
             ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-            ("ALIGN", (1, 0), (1, 0), "CENTER"),
+            ("ALIGN", (1, 0), (1, 0), "LEFT"),
             ("LEFTPADDING", (0, 0), (-1, -1), 0),
             ("RIGHTPADDING", (0, 0), (-1, -1), 0),
             ("TOPPADDING", (0, 0), (-1, -1), 0),
@@ -421,7 +422,7 @@ def build_top40_pdf(kademe: int, exam_name: str, top40_df: pd.DataFrame) -> Byte
         ]))
         elems.append(h)
     else:
-        elems.append(Paragraph(f"<para align='center'><b>İlk 40</b> — {kademe}. Sınıf — {exam_name}</para>", styles["Title"]))
+        elems.append(title)
 
     elems.append(Spacer(1, 4))
 
