@@ -396,9 +396,9 @@ def build_top40_pdf(kademe: int, exam_name: str, top40_df: pd.DataFrame) -> Byte
     )
 
     elems = []
-    # Header (logo solda, başlık sağda)
+    # Header (logo + başlık ortada, tek sayfayı koruyacak şekilde kompakt)
     title_html = (
-        "<para align='left'>"
+        "<para align='center'>"
         "<b>DENEME SINAVLARI</b><br/>"
         "<b>İLK 40 SONUÇ LİSTESİ</b><br/>"
         f"<font size='8'>{kademe}. SINIF • {exam_name}</font>"
@@ -407,14 +407,14 @@ def build_top40_pdf(kademe: int, exam_name: str, top40_df: pd.DataFrame) -> Byte
     title = Paragraph(title_html, styles["Normal"])
 
     if os.path.exists(LOGO_PATH):
-        # Logo daha büyük
-        logo = RLImage(LOGO_PATH, width=75, height=75)
+        # Logo büyük ama tek sayfayı bozmayacak ölçü
+        logo = RLImage(LOGO_PATH, width=68, height=68)
 
-        # 2 kolon: [logo][başlık]
-        h = Table([[logo, title]], colWidths=[85, 745])
+        # 2 kolon: [logo][başlık] — tablo sayfada ortalanır
+        h = Table([[logo, title]], colWidths=[75, 360], hAlign="CENTER")
         h.setStyle(TableStyle([
             ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-            ("ALIGN", (1, 0), (1, 0), "LEFT"),
+            ("ALIGN", (0, 0), (-1, -1), "CENTER"),
             ("LEFTPADDING", (0, 0), (-1, -1), 0),
             ("RIGHTPADDING", (0, 0), (-1, -1), 0),
             ("TOPPADDING", (0, 0), (-1, -1), 0),
@@ -424,7 +424,7 @@ def build_top40_pdf(kademe: int, exam_name: str, top40_df: pd.DataFrame) -> Byte
     else:
         elems.append(title)
 
-    elems.append(Spacer(1, 4))
+    elems.append(Spacer(1, 2))
 
     tdf = top40_df.copy()
 
