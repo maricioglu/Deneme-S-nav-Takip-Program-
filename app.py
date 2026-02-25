@@ -294,7 +294,7 @@ def build_student_pdf(student_name: str, kademe: int, student_df: pd.DataFrame) 
             styles[k].fontName = font_name
 
     buffer = BytesIO()
-    doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=24, leftMargin=24, topMargin=20, bottomMargin=20)
+    doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=6, leftMargin=6, topMargin=6, bottomMargin=6)
 
     elems = []
     # logo + başlık
@@ -391,8 +391,8 @@ def build_top40_pdf(kademe: int, exam_name: str, top40_df: pd.DataFrame) -> Byte
     buffer = BytesIO()
     doc = SimpleDocTemplate(
         buffer,
-        pagesize=landscape(A4),
-        rightMargin=8, leftMargin=8, topMargin=6, bottomMargin=6
+        pagesize=A4,
+        rightMargin=6, leftMargin=6, topMargin=6, bottomMargin=6
     )
 
     elems = []
@@ -443,7 +443,7 @@ def build_top40_pdf(kademe: int, exam_name: str, top40_df: pd.DataFrame) -> Byte
 
     # Kolon genişlikleri (tek sayfa - sıkı)
     # Dinamik kolon genişlikleri (tek sayfa A4 yatay)
-    content_width = landscape(A4)[0] - (doc.leftMargin + doc.rightMargin)
+    content_width = A4[0] - (doc.leftMargin + doc.rightMargin)
 
     fixed_map = {
         "Sıra": 22,
