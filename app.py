@@ -521,7 +521,22 @@ def build_top40_pdf(kademe: int, exam_name: str, top40_df: pd.DataFrame) -> Byte
     tbl.setStyle(TableStyle(style_cmds))
     elems.append(tbl)
 
-    doc.build(elems)
+# --- Sağ alt imza ---
+def _draw_signature(canvas, doc_):
+    canvas.saveState()
+    fn = font_name or "Helvetica"
+    try:
+        canvas.setFont(fn, 9)
+    except Exception:
+        canvas.setFont("Helvetica", 9)
+    x = doc_.pagesize[0] - doc_.rightMargin
+    y1 = doc_.bottomMargin + 22
+    y2 = doc_.bottomMargin + 12
+    canvas.drawRightString(x, y1, "Mehmet ARICIOĞLU")
+    canvas.drawRightString(x, y2, "Psikolojik Danışman / Rehber Öğretmen")
+    canvas.restoreState()
+
+    doc.build(elems, onFirstPage=_draw_signature, onLaterPages=_draw_signature)
     buffer.seek(0)
     return buffer
 
