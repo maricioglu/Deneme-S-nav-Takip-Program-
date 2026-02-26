@@ -313,11 +313,11 @@ def build_student_pdf(student_name: str, kademe: int, student_df: pd.DataFrame) 
     elems.append(Spacer(1, 8))
     elems.append(Paragraph(f"<b>Öğrenci:</b> {student_name}", styles["Normal"]))
     elems.append(Paragraph(f"<b>Kademe:</b> {kademe}", styles["Normal"]))
-    elems.append(Spacer(1, 10))
+    elems.append(Spacer(1, 24))  # leave room for signature
 
     elems.append(Paragraph("Kısa Değerlendirme", styles["Heading2"]))
     elems.append(Paragraph(auto_comment(student_df), styles["Normal"]))
-    elems.append(Spacer(1, 10))
+    elems.append(Spacer(1, 24))  # leave room for signature
 
     tdf = student_df[["exam_name", "sinif", "lgs_puan", "created_at"]].copy().sort_values("created_at")
     tdf["created_at"] = pd.to_datetime(tdf["created_at"], errors="coerce").dt.strftime("%d.%m.%Y %H:%M")
@@ -337,7 +337,7 @@ def build_student_pdf(student_name: str, kademe: int, student_df: pd.DataFrame) 
         ("BOTTOMPADDING", (0,0), (-1,-1), 2),
     ]))
     elems.append(tbl)
-    elems.append(Spacer(1, 10))
+    elems.append(Spacer(1, 24))  # leave room for signature
 
     # puan trend grafiği
     score_series = student_df.sort_values("created_at")[["exam_name", "lgs_puan"]].dropna()
@@ -350,7 +350,7 @@ def build_student_pdf(student_name: str, kademe: int, student_df: pd.DataFrame) 
         plt.xticks(rotation=25, ha="right")
         plt.tight_layout()
         elems.append(fig_to_rl_image(fig, width=520, height=210))
-        elems.append(Spacer(1, 10))
+        elems.append(Spacer(1, 24))  # leave room for signature
 
     # son deneme net grafiği
     try:
@@ -532,7 +532,7 @@ def build_top40_pdf(kademe: int, exam_name: str, top40_df: pd.DataFrame) -> Byte
         leading=9,
         spaceBefore=0,
         spaceAfter=0,
-        rightIndent=18,  # keep a small gap from the right edge
+        rightIndent=40,  # right edge gap (moves text left)
     )
     sig2 = ParagraphStyle(
         "sig2",
@@ -543,10 +543,10 @@ def build_top40_pdf(kademe: int, exam_name: str, top40_df: pd.DataFrame) -> Byte
         leading=8.5,
         spaceBefore=0,
         spaceAfter=0,
-        rightIndent=18,
+        rightIndent=40,  # right edge gap (moves text left),
     )
 
-    elems.append(Spacer(1, 10))
+    elems.append(Spacer(1, 24))  # leave room for signature
     elems.append(Paragraph("<b>Mehmet ARICIOĞLU</b>", sig1))
     elems.append(Paragraph("Psikolojik Danışman / Rehber Öğretmen", sig2))
 
