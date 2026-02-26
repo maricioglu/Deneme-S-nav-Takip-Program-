@@ -9,7 +9,8 @@ from supabase import create_client
 from io import BytesIO
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image as RLImage
 from reportlab.lib.pagesizes import A4, landscape
-from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.enums import TA_RIGHT
 from reportlab.lib import colors
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
@@ -521,24 +522,36 @@ def build_top40_pdf(kademe: int, exam_name: str, top40_df: pd.DataFrame) -> Byte
     tbl.setStyle(TableStyle(style_cmds))
     elems.append(tbl)
 
+    # --- Signature under table (right-aligned, with a little right margin) ---
+    sig1 = ParagraphStyle(
+        "sig1",
+        parent=styles["Normal"],
+        alignment=TA_RIGHT,
+        fontName=font_name or "Helvetica",
+        fontSize=9,
+        leading=9,
+        spaceBefore=0,
+        spaceAfter=0,
+        rightIndent=18,  # keep a small gap from the right edge
+    )
+    sig2 = ParagraphStyle(
+        "sig2",
+        parent=styles["Normal"],
+        alignment=TA_RIGHT,
+        fontName=font_name or "Helvetica",
+        fontSize=8.5,
+        leading=8.5,
+        spaceBefore=0,
+        spaceAfter=0,
+        rightIndent=18,
+    )
 
-    # --- Footer signature (bottom-right) ---
-    def _draw_footer(c, _doc):
-        c.saveState()
-        f = font_name or "Helvetica"
-        # Bold font if available
-        f_bold = "Helvetica-Bold" if f == "Helvetica" else f
-        x = _doc.pagesize[0] - _doc.rightMargin
-        # keep inside page (small y)
-        y1 = 14
-        y2 = 6
-        c.setFont(f_bold, 9)
-        c.drawRightString(x, y1, "Mehmet ARICIOĞLU")
-        c.setFont(f, 8.5)
-        c.drawRightString(x, y2, "Psikolojik Danışman / Rehber Öğretmen")
-        c.restoreState()
+    elems.append(Spacer(1, 10))
+    elems.append(Paragraph("<b>Mehmet ARICIOĞLU</b>", sig1))
+    elems.append(Paragraph("Psikolojik Danışman / Rehber Öğretmen", sig2))
 
-    doc.build(elems, onFirstPage=_draw_footer, onLaterPages=_draw_footer)
+    doc.build(elems)
+
     buffer.seek(0)
     return buffer
 
