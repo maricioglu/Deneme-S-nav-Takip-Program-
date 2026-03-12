@@ -223,11 +223,21 @@ def save_exam_to_supabase(df_exam: pd.DataFrame, exam_name: str):
 
 @st.cache_data(show_spinner=False, ttl=30)
 def fetch_all_results():
-    res = supabase.table(TABLE).select(
-        "exam_name,kademe,ogr_no,ad_soyad,sinif,lgs_puan,created_at,payload"
-    ).execute()
-    return pd.DataFrame(res.data or [])
+    """Fetch all results from Supabase.
 
+    Returns:
+        (df, err): df is a pandas DataFrame. err is None if successful, otherwise a short error string.
+    """
+    try:
+        res = supabase.table(TABLE).select(
+            "exam_name,kademe,ogr_no,ad_soyad,sinif,lgs_puan,created_at,payload"
+        ).execute()
+        df = pd.DataFrame(res.data or [])
+        return df, None
+    except Exception as e:
+        # Don't crash the whole app on Cloud: return empty df + error string.
+        cols = ["exam_name","kademe","ogr_no","ad_soyad","sinif","lgs_puan","created_at","payload"]
+        return pd.DataFrame(columns=cols), f"{type(e).__name__}: {e}"
 def auto_comment(student_df: pd.DataFrame) -> str:
     if student_df.empty or student_df["lgs_puan"].dropna().empty:
         return "Bu öğrenci için yeterli puan verisi bulunamadı."
@@ -589,7 +599,19 @@ with tab_add:
 # TAB 2: Analiz Paneli
 # --------------------
 with tab_dash:
-    all_df = fetch_all_results()
+    all_df, fetch_err = fetch_all_results()
+    if fetch_err:
+        st.error("Supabase bağlantı hatası: veriler çekilemedi.")
+        st.code(fetch_err)
+        st.info(
+            "Kontrol listesi:\n"
+            "1) Supabase projesi paused mı? (Resume)\n"
+            "2) Streamlit Cloud → Settings → Secrets: SUPABASE_URL ve SUPABASE_ANON_KEY doğru mu?\n"
+            "3) Supabase Dashboard → Project Settings → API: URL ile key eşleşiyor mu?\n"
+            "4) Birkaç dakika bekleyip Reboot App yap (Resume sonrası)."
+        )
+        st.stop()
+
     if all_df.empty:
         st.warning("Supabase’te kayıt yok.")
         st.stop()
