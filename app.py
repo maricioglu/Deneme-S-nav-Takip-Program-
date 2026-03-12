@@ -538,14 +538,14 @@ def build_top40_pdf(kademe: int, exam_name: str, top40_df: pd.DataFrame) -> Byte
         col_widths = [per if w is None else w for w in col_widths]
 
     # Sütun çoksa fontu küçült
-    body_font = 6.2
+    body_font = 6.6
     if n_exam >= 8:
-        body_font = 5.6
+        body_font = 6.0
     if n_exam >= 10:
-        body_font = 5.2
+        body_font = 5.6
 
     # Satır yükseklikleri sabit (tek sayfa için)
-    row_heights = [14] + [12] * (len(table_data) - 1)
+    row_heights = [15] + [13] * (len(table_data) - 1)
 
     tbl = Table(table_data, colWidths=col_widths, rowHeights=row_heights, hAlign="CENTER")
 
@@ -553,9 +553,9 @@ def build_top40_pdf(kademe: int, exam_name: str, top40_df: pd.DataFrame) -> Byte
         ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#0F2D52")),
         ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
         ("FONTNAME", (0, 0), (-1, -1), font_name or "Helvetica"),
-        ("FONTSIZE", (0, 0), (-1, 0), 7),       # başlık
+        ("FONTSIZE", (0, 0), (-1, 0), 7.5),       # başlık
         ("FONTSIZE", (0, 1), (-1, -1), body_font),    # içerik
-        ("LEADING", (0, 0), (-1, 0), 9),
+        ("LEADING", (0, 0), (-1, 0), 9.5),
         ("LEADING", (0, 1), (-1, -1), body_font + 1.2),
         ("GRID", (0, 0), (-1, -1), 0.25, colors.HexColor("#9aa7b2")),
         ("ALIGN", (0, 0), (-1, 0), "CENTER"),
