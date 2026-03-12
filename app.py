@@ -5,6 +5,12 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from supabase import create_client
 
+# Network errors
+try:
+    import httpx
+except Exception:  # pragma: no cover
+    httpx = None
+
 # PDF (ReportLab)
 from io import BytesIO
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image as RLImage
@@ -27,6 +33,36 @@ supabase = create_client(SUPABASE_URL, SUPABASE_ANON_KEY)
 TABLE = "lgs_results"
 LOGO_PATH = "assets/images/logo.jpg"  # varsa kullanılır
 FONT_PATH = "assets/fonts/DejaVuSans.ttf"  # Türkçe için
+
+# --------------------
+# SUPABASE HATA YÖNETİMİ
+# --------------------
+
+def _supabase_err_msg(e: Exception) -> str:
+    # Streamlit Cloud bazı detayları redact eder; kullanıcıya kısa mesaj gösterelim.
+    return "Supabase bağlantısı kurulamadı. Proje paused olabilir veya ağ/URL/KEY sorunu olabilir." 
+
+
+def _is_connect_error(e: Exception) -> bool:
+    if httpx is not None and isinstance(e, Exception):
+        try:
+            return isinstance(e, httpx.ConnectError)
+        except Exception:
+            return False
+    # httpx yoksa da 'ConnectError' string kontrolü
+    return "ConnectError" in type(e).__name__ or "ConnectError" in str(e)
+
+
+def show_supabase_error(e: Exception, where: str):
+    st.error(f"❌ {where}: {_supabase_err_msg(e)}")
+    with st.expander("Kontrol listesi"):
+        st.markdown(
+            "- Supabase projesi **paused** ise **Resume** edin\n"
+            "- Streamlit Secrets: `SUPABASE_URL` ve `SUPABASE_ANON_KEY` doğru mu?\n"
+            "- Supabase Dashboard → Settings → API: URL/Key eşleşiyor mu?\n"
+            "- Ağ geçici olabilir: 1-2 dk sonra tekrar deneyin"
+        )
+
 
 # --------------------
 # STİL
@@ -201,8 +237,13 @@ def _to_payload(row: pd.Series) -> dict:
             d[k] = None
     return d
 
-def save_exam_to_supabase(df_exam: pd.DataFrame, exam_name: str):
-    supabase.table(TABLE).delete().eq("exam_name", exam_name).execute()
+def save_exam_to_supabase(df_exam: pd.DataFrame, exam_name: str) -> bool:
+    """Supabase'e kaydet. Bağlantı hatasında uygulama çökmesin."""
+    try:
+        supabase.table(TABLE).delete().eq("exam_name", exam_name).execute()
+    except Exception as e:
+        show_supabase_error(e, "Kayıt silme işlemi başarısız")
+        return False
 
     rows = []
     for _, r in df_exam.iterrows():
@@ -218,26 +259,29 @@ def save_exam_to_supabase(df_exam: pd.DataFrame, exam_name: str):
         })
 
     chunk = 300
-    for i in range(0, len(rows), chunk):
-        supabase.table(TABLE).insert(rows[i:i+chunk]).execute()
+    try:
+        for i in range(0, len(rows), chunk):
+            supabase.table(TABLE).insert(rows[i:i+chunk]).execute()
+    except Exception as e:
+        show_supabase_error(e, "Kayıt ekleme işlemi başarısız")
+        return False
+
+    return True
+
 
 @st.cache_data(show_spinner=False, ttl=30)
+@st.cache_data(show_spinner=False, ttl=30)
 def fetch_all_results():
-    """Fetch all results from Supabase.
-
-    Returns:
-        (df, err): df is a pandas DataFrame. err is None if successful, otherwise a short error string.
-    """
     try:
         res = supabase.table(TABLE).select(
             "exam_name,kademe,ogr_no,ad_soyad,sinif,lgs_puan,created_at,payload"
         ).execute()
-        df = pd.DataFrame(res.data or [])
-        return df, None
+        return pd.DataFrame(res.data or [])
     except Exception as e:
-        # Don't crash the whole app on Cloud: return empty df + error string.
-        cols = ["exam_name","kademe","ogr_no","ad_soyad","sinif","lgs_puan","created_at","payload"]
-        return pd.DataFrame(columns=cols), f"{type(e).__name__}: {e}"
+        show_supabase_error(e, "Veri çekme başarısız")
+        return pd.DataFrame()
+
+
 def auto_comment(student_df: pd.DataFrame) -> str:
     if student_df.empty or student_df["lgs_puan"].dropna().empty:
         return "Bu öğrenci için yeterli puan verisi bulunamadı."
@@ -591,27 +635,19 @@ with tab_add:
 
         if st.button("✅ Supabase’e Kaydet", type="primary"):
             with st.spinner("Kaydediliyor..."):
-                save_exam_to_supabase(df, exam_name)
-                st.cache_data.clear()
-            st.success("Kaydedildi ✅ Analiz Paneli sekmesine geçebilirsin.")
+                ok = save_exam_to_supabase(df, exam_name)
+                if ok:
+                    st.cache_data.clear()
+            if ok:
+                st.success("Kaydedildi ✅ Analiz Paneli sekmesine geçebilirsin.")
+            else:
+                st.warning("Kaydedilemedi. Supabase bağlantısını kontrol edip tekrar deneyin.")
 
 # --------------------
 # TAB 2: Analiz Paneli
 # --------------------
 with tab_dash:
-    all_df, fetch_err = fetch_all_results()
-    if fetch_err:
-        st.error("Supabase bağlantı hatası: veriler çekilemedi.")
-        st.code(fetch_err)
-        st.info(
-            "Kontrol listesi:\n"
-            "1) Supabase projesi paused mı? (Resume)\n"
-            "2) Streamlit Cloud → Settings → Secrets: SUPABASE_URL ve SUPABASE_ANON_KEY doğru mu?\n"
-            "3) Supabase Dashboard → Project Settings → API: URL ile key eşleşiyor mu?\n"
-            "4) Birkaç dakika bekleyip Reboot App yap (Resume sonrası)."
-        )
-        st.stop()
-
+    all_df = fetch_all_results()
     if all_df.empty:
         st.warning("Supabase’te kayıt yok.")
         st.stop()
